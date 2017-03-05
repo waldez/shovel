@@ -277,5 +277,6 @@ class Shovel {
 }
 
 module.exports = {
-    Shovel
+    Shovel,
+    ShovelClient: require('./node_client')
 };
