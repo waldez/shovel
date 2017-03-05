@@ -6,7 +6,8 @@
   "main": "src/shovel.js",
   "private": true,
   "scripts": {
-    "test": "mocha test --recursive"
+    "test": "mocha test --recursive",
+    "prepublish": "node scripts/create_dist.js"
   },
   "license": "",
   "dependencies": {

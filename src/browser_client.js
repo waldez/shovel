@@ -1,8 +1,6 @@
 'use strict';
 
-// import * as Client from './client';
 const ShovelClient = require('./client');
-
 const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data) => {
 
     return new Promise((resolve, reject) => {
@@ -24,5 +22,4 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     });
 };
 
-// export var ShovelClient = Client.create.bind(null, request);
 module.exports = ShovelClient.create.bind(null, request);
