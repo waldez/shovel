@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "test": "mocha test --recursive",
-    "postinstall": "node scripts/create_dist.js"
+    "dist": "scripts/create_dist.js"
   },
   "license": "",
   "dependencies": {

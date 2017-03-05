@@ -1,8 +1,8 @@
-#!/usr/bin/env node
 'use strict'
 
 const webpack = require('webpack');
 const path = require('path');
+
 const webPackConfig = {
     context: path.resolve(__dirname, '../src'),
     entry: {
@@ -12,8 +12,19 @@ const webPackConfig = {
         path: path.resolve(__dirname, '../dist'),
         filename: 'client_bundle.js',
         library: 'ShovelClient'
-    },
+    }
+};
 
+const minifyWebPackConfig = {
+    context: path.resolve(__dirname, '../src'),
+    entry: {
+        app: './browser_client.js'
+    },
+    output: {
+        path: path.resolve(__dirname, '../dist'),
+        filename: 'client_bundle.min.js',
+        library: 'ShovelClient'
+    },
     // production - babel + UglifyJS
     module: {
         rules: [
@@ -45,10 +56,9 @@ const webPackConfig = {
             comments: false
         })
     ]
-
 };
 
-webpack(webPackConfig).run((err, stats) => {
+function showResults(err, stats) {
 
     if (err) {
         console.log('ERROR:', err);
@@ -58,4 +68,11 @@ webpack(webPackConfig).run((err, stats) => {
         // Add console colors
         colors: true
     }));
+}
+
+// TODO: not optimal, but sufficient for now..
+[webPackConfig, minifyWebPackConfig].forEach(config => {
+
+    console.log(`Webpack is building ${config.output.filename}:`);
+    webpack(config).run(showResults);
 });
