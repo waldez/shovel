@@ -1,6 +1,9 @@
 'use strict';
 const JSONE = require('./jsone');
 
+// 30 seconds hook timeout
+// const HOOK_TIMEOUT = 30 * 1000;
+const HOOK_TIMEOUT = 5 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 const Ξ = Symbol('private');
@@ -143,9 +146,15 @@ class ShovelClient {
             }
         };
 
+        // start with empty promise and hook timeout timer
+        let hookPromise = null;
+        let hookTimer = null;
+
+        const jsone = new JSONE({ handlers: jsonHandlers });
+        const bodyParser = jsone.decode.bind(jsone);
         // private stuff
         this[Ξ] = {
-            JSONE: new JSONE({ handlers: jsonHandlers }),
+            JSONE: jsone,
             wrappers,
             instances,
             addWrapperClass: function(descriptor, typeName, typeHash) {
@@ -170,6 +179,56 @@ class ShovelClient {
                     instances.set(uid, instance);
                 }
                 return instance;
+            }.bind(that),
+            foreverHook: function() {
+
+                // clear the timer
+                clearTimeout(hookTimer);
+                hookTimer = null;
+                // if there is pending request, cancel it
+                if (hookPromise) {
+
+                    console.log('!W! - aborting:');
+
+                    hookPromise.abort();
+                    hookPromise = null;
+                }
+
+
+
+                // needed this direct promise, to be able call abort
+                hookPromise = this.request({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
+                hookPromise
+                    .then(data => {
+
+                        // fullfilled, so clear it
+                        hookPromise = null;
+
+                        console.log('!W! - data:', data);
+
+                        // keep the cycle alive
+                        this[Ξ].foreverHook();
+                    }, error => {
+
+                        // fullfilled with error, so clear it
+                        hookPromise = null;
+                        // TODO: !!
+                        console.log('Forever hook ERROR:', error);
+
+                        // keep the cycle alive
+                        this[Ξ].foreverHook();
+                    });
+
+                console.log('!W! - hookPromise:', hookPromise);
+                console.log('!W! - hookPromise.abort:', hookPromise.abort);
+
+                // set the timeout
+                hookTimer = setTimeout(() => {
+
+                    // restarts the loop
+                    this[Ξ].foreverHook();
+                }, HOOK_TIMEOUT);
+
             }.bind(that)
         };
 
@@ -179,12 +238,21 @@ class ShovelClient {
             options.host = serviceHost;
             options.port = servicePort;
 
+            // let prom = request(options, data);
+
+            // console.log('!W! - prom:', prom);
+            // console.log('!W! - prom.abort:', prom.abort);
+
+            // return prom;
+
             return request(options, data);
         }.bind(this, serviceHost, servicePort);
+
     }
 
     initialize() {
 
+        this[Ξ].foreverHook();
         return this.list(true).then(() => this);
     }
 

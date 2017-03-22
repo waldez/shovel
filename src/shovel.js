@@ -102,10 +102,11 @@ class Shovel {
         this.server = new Server(port, {
             // define routes
             'GET': {
-                // not supproted for now
+                // not supported for now
             },
             'POST': {
-                '/': this.processRequest.bind(this)
+                '/': this.processRequest.bind(this),
+                '/foreverhook': this.processForeverHook.bind(this)
             }
         });
         this.server.start();
@@ -210,6 +211,30 @@ class Shovel {
             { metadata: 'comming soon!' },
             { [path]: { data } }
             ]);
+    }
+
+    processForeverHook(req) {
+
+        req = this.jsone.decode(req);
+
+        // TODO: smazat! devel only
+        const delay = (29 + (2 * Math.random())) * 1000;
+
+        const start = new Date();
+
+        return new Promise((resolve, reject) => {
+
+            setTimeout(() => {
+
+                const data = {
+                    delay,
+                    start,
+                    end: new Date()
+                };
+
+                resolve(this.jsone.encode(data));
+            }, delay);
+        });
     }
 
     processRequest(req) {

@@ -5,10 +5,11 @@ const ShovelClient = require('./client');
 
 const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data) => {
 
-    return new Promise((resolve, reject) => {
+    let req;
+    let promise = new Promise((resolve, reject) => {
 
         data = typeof data === 'object' ? JSON.stringify(data) : data;
-        let req = http.request({ method, path, host, port }, res => {
+        req = http.request({ method, path, host, port }, res => {
             // Continuously update stream with data
             let body = '';
             res.on('data', d => { body += d; });
@@ -20,12 +21,20 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
             console.log(`problem with request: ${e}`);
         });
 
+
         // write data to request body
         if (data) {
             req.write(data);
         }
-        req.end();
     });
+
+    // enhance promise with request cancelation
+    promise.abort = req.abort.bind(req);
+
+    // send the data
+    req.end();
+    // return enhanced promise
+    return promise;
 };
 
 module.exports = ShovelClient.create.bind(null, request);
