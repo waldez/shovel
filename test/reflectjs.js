@@ -1,7 +1,7 @@
 'use strict';
 
 const expect = require('chai').expect;
-const reflectjs = require('../reflectjs');
+const reflectjs = require('../src/reflectjs');
 
 describe('ReflectJS', () => {
 

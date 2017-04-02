@@ -1,13 +1,13 @@
 {
   "name": "shovel",
   "version": "0.1.0",
-  "description": "SHOVEL stands for Simple Http TODO",
+  "description": "SHOVEL stands for Shit Happens Online - Library",
   "author": "Tomas Waldauf <tomas@waldauf.cz>",
   "main": "src/shovel.js",
   "private": true,
   "scripts": {
     "test": "mocha test --recursive",
-    "dist": "scripts/create_dist.js"
+    "dist": "node scripts/create_dist.js"
   },
   "license": "",
   "dependencies": {

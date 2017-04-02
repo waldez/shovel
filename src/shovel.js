@@ -88,8 +88,10 @@ class Shovel {
             }
         };
 
-        this.jsone = new JSONE({ handlers: jsonHandlers });
+        const sessionMap = new Map();
 
+        this.sessionMap = sessionMap;
+        this.jsone = new JSONE({ handlers: jsonHandlers });
         this.types = {}; // ??
 
         // uuid:wrapper
@@ -101,6 +103,7 @@ class Shovel {
         this.port = port;
         this.server = new Server(port, {
             // define routes
+            'OPTIONS': (requestData, request) => Promise.resolve(200),
             'GET': {
                 // not supported for now
             },
@@ -109,6 +112,24 @@ class Shovel {
                 '/foreverhook': this.processForeverHook.bind(this)
             }
         });
+
+        this.server.on('requestaborted', request => {
+
+            // be more clever... this is not nice solution
+            if (request.url == '/foreverhook') {
+                const sessionId = request.headers['x-shovel-session'];
+                let sessionData = this.sessionMap.get(sessionId) || {};
+
+                if (sessionData.foreverHook) {
+                    sessionData.foreverHook.resolve('aborted');
+                }
+
+                sessionData.foreverHook = null;
+
+                this.sessionMap.set(sessionId, sessionData);
+            }
+        });
+
         this.server.start();
     }
 
@@ -213,34 +234,34 @@ class Shovel {
             ]);
     }
 
-    processForeverHook(req) {
+    processForeverHook(requestData, request) {
 
-        req = this.jsone.decode(req);
-
-        // TODO: smazat! devel only
-        const delay = (29 + (2 * Math.random())) * 1000;
-
-        const start = new Date();
+        const sessionId = request.headers['x-shovel-session'];
+        // do not need
+        // requestData = this.jsone.decode(requestData);
 
         return new Promise((resolve, reject) => {
 
-            setTimeout(() => {
+            let sessionData = this.sessionMap.get(sessionId) || {};
 
-                const data = {
-                    delay,
-                    start,
-                    end: new Date()
-                };
+            if (sessionData.foreverHook) {
+                sessionData.foreverHook.resolve('overlap');
+            }
 
-                resolve(this.jsone.encode(data));
-            }, delay);
+            sessionData.foreverHook = {
+                sessionId,
+                resolve,
+                reject
+            };
+
+            this.sessionMap.set(sessionId, sessionData);
         });
     }
 
-    processRequest(req) {
+    processRequest(requestData, request) {
 
-        req = this.jsone.decode(req);
-        let { action, path = 0, field, data } = req;
+        requestData = this.jsone.decode(requestData);
+        let { action, path = 0, field, data } = requestData;
 
         if (!action) { // in future, in this case, we want to send some info data, or whatever
             return Promise.reject('Malformed request!');
@@ -296,7 +317,7 @@ class Shovel {
 
         return Promise.resolve({
             message: 'Hello Shovel!',
-            originalRequest: JSON.stringify(req)
+            originalRequest: JSON.stringify(requestData)
         });
     }
 }

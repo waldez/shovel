@@ -1,7 +1,26 @@
 'use strict';
 
 const ShovelClient = require('./client');
-const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data) => {
+
+if (typeof window.sessionStorage != 'object') {
+    throw new Error('Incompatible client for Shovel! Unsupported window.sessionStorage.');
+}
+
+const STORAGE_SESSION_KEY = 'shovelSessionId';
+
+const getSessionId = () => {
+
+    let sessionId = window.sessionStorage.getItem(STORAGE_SESSION_KEY);
+
+    if (!sessionId) {
+        sessionId = ShovelClient.generateSessionId();
+        window.sessionStorage.setItem(STORAGE_SESSION_KEY, sessionId);
+    }
+
+    return sessionId;
+};
+
+const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
 
     let req;
     let promise = new Promise((resolve, reject) => {
@@ -9,8 +28,34 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         data = typeof data === 'object' ? JSON.stringify(data) : data;
         req = new XMLHttpRequest();
 
-        // TODO: do the headers
-        // req.setRequestHeader('custom-header', 'value');
+
+        // TODO: ?? inspiration
+        // var xhr = new XMLHttpRequest();
+        // console.log('UNSENT', xhr.status);
+
+        // xhr.open('GET', '/server', true);
+        // console.log('OPENED', xhr.status);
+
+        // xhr.onprogress = function () {
+        //   console.log('LOADING', xhr.status);
+        // };
+
+        // xhr.onload = function () {
+        //   console.log('DONE', xhr.status);
+        // };
+
+        // xhr.send(null);
+
+
+        req.error = (error) => {
+
+            reject({
+                state: req.readyState,
+                status: req.status,
+                response: req.responseText,
+                error
+            });
+        };
 
         req.onreadystatechange = () => {
 
@@ -19,6 +64,14 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
             }
         };
         req.open(method, `http://${host}:${port}${path}`, true);
+
+        if (typeof headers == 'object') {
+            for (let headerName in headers) {
+                if (headers.hasOwnProperty(headerName)) {
+                    req.setRequestHeader(headerName, headers[headerName]);
+                }
+            }
+        }
     });
 
     // enhance promise with request abortion
@@ -29,4 +82,4 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     return promise;
 };
 
-module.exports = ShovelClient.create.bind(null, request);
+module.exports = ShovelClient.create.bind(null, request, getSessionId);

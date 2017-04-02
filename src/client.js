@@ -53,6 +53,15 @@ let Wrapper = function(typeName, typeHash) {
     });
 };
 
+function getUid() {
+
+    const timePart = (new Date()).getTime();
+    const randomPart = (Math.random() * 1e9) | 0;
+    const modPart = randomPart % 15;
+
+    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+}
+
 function _w(instance) {
 
     if (instance instanceof Wrapper) {
@@ -110,7 +119,7 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 }
 
 class ShovelClient {
-    constructor({ serviceHost = 'localhost', servicePort = '31415', request }) {
+    constructor({ serviceHost = 'localhost', servicePort = '31415', request, getSessionId }) {
 
         request = request.bind(null, processResponse);
         // clientId, <-client identifier
@@ -188,13 +197,11 @@ class ShovelClient {
                 // if there is pending request, cancel it
                 if (hookPromise) {
 
-                    console.log('!W! - aborting:');
+                    // console.log('!W! - aborting:');
 
                     hookPromise.abort();
                     hookPromise = null;
                 }
-
-
 
                 // needed this direct promise, to be able call abort
                 hookPromise = this.request({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
@@ -213,14 +220,20 @@ class ShovelClient {
                         // fullfilled with error, so clear it
                         hookPromise = null;
                         // TODO: !!
-                        console.log('Forever hook ERROR:', error);
 
-                        // keep the cycle alive
-                        this[Ξ].foreverHook();
+                        // JUST IGNORE FOR NOW!
+
+                        // console.log('Forever hook ERROR:', error);
+
+                        // // socket hang up
+
+                        // if (error.message.indexOf('ECONNREFUSED') > 0) {
+
+                        // } else {
+                        //     // keep the cycle alive
+                        //     this[Ξ].foreverHook();
+                        // }
                     });
-
-                console.log('!W! - hookPromise:', hookPromise);
-                console.log('!W! - hookPromise.abort:', hookPromise.abort);
 
                 // set the timeout
                 hookTimer = setTimeout(() => {
@@ -238,14 +251,11 @@ class ShovelClient {
             options.host = serviceHost;
             options.port = servicePort;
 
-            // let prom = request(options, data);
+            const headers = {
+                'X-Shovel-Session': getSessionId()
+            };
 
-            // console.log('!W! - prom:', prom);
-            // console.log('!W! - prom.abort:', prom.abort);
-
-            // return prom;
-
-            return request(options, data);
+            return request(options, data, headers);
         }.bind(this, serviceHost, servicePort);
 
     }
@@ -343,10 +353,15 @@ class ShovelClient {
         return Wrapper;
     }
 
-    static create(request, { serviceHost, servicePort } = {}, fetchList = true) {
+    static create(request, getSessionId, { serviceHost, servicePort } = {}, fetchList = true) {
 
-        let client = new ShovelClient({ serviceHost, servicePort, request });
+        let client = new ShovelClient({ serviceHost, servicePort, request, getSessionId });
         return fetchList ? client.initialize() : client;
+    }
+
+    static generateSessionId() {
+
+        return getUid();
     }
 }
 

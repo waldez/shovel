@@ -3,7 +3,7 @@
 const expect = require('chai').expect;
 const Promise = require('bluebird');
 
-const Wrapper = require('../wrapper');
+const Wrapper = require('../src/wrapper');
 
 // just define some testing classes
 

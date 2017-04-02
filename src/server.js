@@ -1,16 +1,20 @@
 'use strict'
 const Url = require('url');
 const http = require('http');
+const EventEmitter = require('events');
 
 const RESPONSE_HEADERS = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*'
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, GET',
+    'Access-Control-Allow-Headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Shovel-Session'
 };
 
-class Server {
+class Server extends EventEmitter {
 
     constructor(port, router) {
 
+        super();
         this.port = port;
         this.router = router;
         this.server = http.createServer(this.requestListener.bind(this));
@@ -28,13 +32,15 @@ class Server {
 
     preprocessRequest(request) {
 
+        request.on('aborted', () => this.emit('requestaborted', request));
+
         let methodHandler = this.router[request.method];
         if (!methodHandler) {
             return { code: 400, error: `Method '${request.method}' not supported.` };
         }
 
         let url = Url.parse(request.url);
-        let route = methodHandler[url.pathname];
+        let route = typeof methodHandler == 'function' ? methodHandler : methodHandler[url.pathname];
         if (typeof route != 'function') {
             return { code: 400, error: `Endpoint '${url.pathname}' does not exist.` };
         }
@@ -70,7 +76,7 @@ class Server {
 
             body = Buffer.concat(body).toString();
             // at this point, `body` has the entire request body stored in it as a string
-            prereq.route(body)
+            prereq.route(body, req)
                 .then(responseData => {
 
                     responseData = typeof responseData == 'string' ? responseData : JSON.stringify(responseData);

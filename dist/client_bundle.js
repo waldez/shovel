@@ -75,6 +75,9 @@ var ShovelClient =
 
 const JSONE = __webpack_require__(1);
 
+// 30 seconds hook timeout
+// const HOOK_TIMEOUT = 30 * 1000;
+const HOOK_TIMEOUT = 5 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 const Ξ = Symbol('private');
@@ -123,6 +126,15 @@ let Wrapper = function(typeName, typeHash) {
         }
     });
 };
+
+function getUid() {
+
+    const timePart = (new Date()).getTime();
+    const randomPart = (Math.random() * 1e9) | 0;
+    const modPart = randomPart % 15;
+
+    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+}
 
 function _w(instance) {
 
@@ -181,7 +193,7 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 }
 
 class ShovelClient {
-    constructor({ serviceHost = 'localhost', servicePort = '31415', request }) {
+    constructor({ serviceHost = 'localhost', servicePort = '31415', request, getSessionId }) {
 
         request = request.bind(null, processResponse);
         // clientId, <-client identifier
@@ -217,9 +229,15 @@ class ShovelClient {
             }
         };
 
+        // start with empty promise and hook timeout timer
+        let hookPromise = null;
+        let hookTimer = null;
+
+        const jsone = new JSONE({ handlers: jsonHandlers });
+        const bodyParser = jsone.decode.bind(jsone);
         // private stuff
         this[Ξ] = {
-            JSONE: new JSONE({ handlers: jsonHandlers }),
+            JSONE: jsone,
             wrappers,
             instances,
             addWrapperClass: function(descriptor, typeName, typeHash) {
@@ -244,6 +262,57 @@ class ShovelClient {
                     instances.set(uid, instance);
                 }
                 return instance;
+            }.bind(that),
+            foreverHook: function() {
+
+                // clear the timer
+                clearTimeout(hookTimer);
+                hookTimer = null;
+                // if there is pending request, cancel it
+                if (hookPromise) {
+
+                    console.log('!W! - aborting:');
+
+                    hookPromise.abort();
+                    hookPromise = null;
+                }
+
+                // needed this direct promise, to be able call abort
+                hookPromise = this.request({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
+                hookPromise
+                    .then(data => {
+
+                        // fullfilled, so clear it
+                        hookPromise = null;
+
+                        console.log('!W! - data:', data);
+
+                        // keep the cycle alive
+                        this[Ξ].foreverHook();
+                    }, error => {
+
+                        // fullfilled with error, so clear it
+                        hookPromise = null;
+                        // TODO: !!
+                        console.log('Forever hook ERROR:', error);
+
+                        // socket hang up
+
+                        if (error.message.indexOf('ECONNREFUSED') > 0) {
+
+                        } else {
+                            // keep the cycle alive
+                            this[Ξ].foreverHook();
+                        }
+                    });
+
+                // set the timeout
+                hookTimer = setTimeout(() => {
+
+                    // restarts the loop
+                    this[Ξ].foreverHook();
+                }, HOOK_TIMEOUT);
+
             }.bind(that)
         };
 
@@ -253,12 +322,18 @@ class ShovelClient {
             options.host = serviceHost;
             options.port = servicePort;
 
-            return request(options, data);
+            const headers = {
+                'X-Shovel-Session': getSessionId()
+            };
+
+            return request(options, data, headers);
         }.bind(this, serviceHost, servicePort);
+
     }
 
     initialize() {
 
+        this[Ξ].foreverHook();
         return this.list(true).then(() => this);
     }
 
@@ -349,10 +424,15 @@ class ShovelClient {
         return Wrapper;
     }
 
-    static create(request, { serviceHost, servicePort } = {}, fetchList = true) {
+    static create(request, getSessionId, { serviceHost, servicePort } = {}, fetchList = true) {
 
-        let client = new ShovelClient({ serviceHost, servicePort, request });
+        let client = new ShovelClient({ serviceHost, servicePort, request, getSessionId });
         return fetchList ? client.initialize() : client;
+    }
+
+    static generateSessionId() {
+
+        return getUid();
     }
 }
 
@@ -544,15 +624,61 @@ module.exports = JSONE;
 
 
 const ShovelClient = __webpack_require__(0);
-const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data) => {
 
-    return new Promise((resolve, reject) => {
+if (typeof window.sessionStorage != 'object') {
+    throw new Error('Incompatible client for Shovel! Unsupported window.sessionStorage.');
+}
+
+const STORAGE_SESSION_KEY = 'shovelSessionId';
+
+const getSessionId = () => {
+
+    let sessionId = window.sessionStorage.getItem(STORAGE_SESSION_KEY);
+
+    if (!sessionId) {
+        sessionId = ShovelClient.generateSessionId();
+        window.sessionStorage.setItem(STORAGE_SESSION_KEY, sessionId);
+    }
+
+    return sessionId;
+};
+
+const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
+
+    let req;
+    let promise = new Promise((resolve, reject) => {
 
         data = typeof data === 'object' ? JSON.stringify(data) : data;
-        let req = new XMLHttpRequest();
+        req = new XMLHttpRequest();
 
-        // TODO: do the headers
-        // req.setRequestHeader('custom-header', 'value');
+
+        // TODO: ?? inspiration
+        // var xhr = new XMLHttpRequest();
+        // console.log('UNSENT', xhr.status);
+
+        // xhr.open('GET', '/server', true);
+        // console.log('OPENED', xhr.status);
+
+        // xhr.onprogress = function () {
+        //   console.log('LOADING', xhr.status);
+        // };
+
+        // xhr.onload = function () {
+        //   console.log('DONE', xhr.status);
+        // };
+
+        // xhr.send(null);
+
+
+        req.error = (error) => {
+
+            reject({
+                state: req.readyState,
+                status: req.status,
+                response: req.responseText,
+                error
+            });
+        };
 
         req.onreadystatechange = () => {
 
@@ -561,11 +687,25 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
             }
         };
         req.open(method, `http://${host}:${port}${path}`, true);
-        req.send(data);
+
+        if (typeof headers == 'object') {
+            for (let headerName in headers) {
+                if (headers.hasOwnProperty(headerName)) {
+                    req.setRequestHeader(headerName, headers[headerName]);
+                }
+            }
+        }
     });
+
+    // enhance promise with request abortion
+    promise.abort = req.abort.bind(req);
+    // finally, send the stuff
+    req.send(data);
+
+    return promise;
 };
 
-module.exports = ShovelClient.create.bind(null, request);
+module.exports = ShovelClient.create.bind(null, request, getSessionId);
 
 
 /***/ })
