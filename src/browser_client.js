@@ -74,8 +74,14 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         }
     });
 
-    // enhance promise with request abortion
-    promise.abort = req.abort.bind(req);
+    // enhance promise with request cancelation
+    promise.abort = () => {
+
+        promise.aborted = true;
+        req.abort.bind(req);
+        return promise;
+    };
+
     // finally, send the stuff
     req.send(data);
 

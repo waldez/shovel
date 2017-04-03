@@ -20,7 +20,10 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
             res.on('end', () => { processResponse(resolve, reject, body, res.statusCode, res.statusMessage, bodyParser); });
         });
 
-        req.on('error', reject);
+        req.on('error', error => {
+
+            reject(error);
+        });
 
         // write data to request body
         if (data) {
@@ -29,7 +32,12 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     });
 
     // enhance promise with request cancelation
-    promise.abort = req.abort.bind(req);
+    promise.abort = () => {
+
+        promise.aborted = true;
+        req.abort.bind(req);
+        return promise;
+    };
 
     // send the data
     req.end();

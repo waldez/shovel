@@ -121,7 +121,7 @@ class Shovel {
                 let sessionData = this.sessionMap.get(sessionId) || {};
 
                 if (sessionData.foreverHook) {
-                    sessionData.foreverHook.resolve('aborted');
+                    sessionData.foreverHook.reject({ aborted: 'true' });
                 }
 
                 sessionData.foreverHook = null;
@@ -234,6 +234,19 @@ class Shovel {
             ]);
     }
 
+    // TODO: smazat!
+    test(str) {
+
+        // send to each! this is for testing only!
+        this.sessionMap.forEach((sessionData, sessionId) => {
+
+            if (sessionData.foreverHook) {
+                sessionData.foreverHook.resolve({ data: str });
+                sessionData.foreverHook = null;
+            }
+        });
+    }
+
     processForeverHook(requestData, request) {
 
         const sessionId = request.headers['x-shovel-session'];
@@ -245,7 +258,7 @@ class Shovel {
             let sessionData = this.sessionMap.get(sessionId) || {};
 
             if (sessionData.foreverHook) {
-                sessionData.foreverHook.resolve('overlap');
+                sessionData.foreverHook.reject({ aborted: 'true' });
             }
 
             sessionData.foreverHook = {

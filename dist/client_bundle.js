@@ -105,7 +105,7 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
                 .then(resolve)
                 .catch(reject);
         } catch (parsingError) {
-            Promise.reject(parsingError);
+            reject(parsingError);
         }
 
     } else {
@@ -265,16 +265,28 @@ class ShovelClient {
             }.bind(that),
             foreverHook: function() {
 
+                console.log(`--== Forever hook start new cycle ==--`);
+
                 // clear the timer
                 clearTimeout(hookTimer);
                 hookTimer = null;
                 // if there is pending request, cancel it
                 if (hookPromise) {
 
-                    console.log('!W! - aborting:');
+                    console.log('!W! - aborting');
 
-                    hookPromise.abort();
-                    hookPromise = null;
+                    hookPromise.abort()
+                        .then(() => {
+
+                            console.log(`!W! - then`);
+                            this[Ξ].foreverHook();
+                        })
+                        .catch(() => {
+
+                            console.log(`!W! - catch`);
+                            this[Ξ].foreverHook();
+                        });
+                    // hookPromise = null;
                 }
 
                 // needed this direct promise, to be able call abort
@@ -291,23 +303,23 @@ class ShovelClient {
                         this[Ξ].foreverHook();
                     }, error => {
 
+                        if (hookPromise.aborted) {
+
+                            console.log(`!W! - request aborted`);
+                            this[Ξ].foreverHook();
+                        } else {
+
+                            console.log('Forever hook error:', error);
+                        }
+
                         // fullfilled with error, so clear it
                         hookPromise = null;
-                        // TODO: !!
-                        console.log('Forever hook ERROR:', error);
-
-                        // socket hang up
-
-                        if (error.message.indexOf('ECONNREFUSED') > 0) {
-
-                        } else {
-                            // keep the cycle alive
-                            this[Ξ].foreverHook();
-                        }
                     });
 
                 // set the timeout
                 hookTimer = setTimeout(() => {
+
+                    console.log(`!W! - starting hook by timer`);
 
                     // restarts the loop
                     this[Ξ].foreverHook();
@@ -697,8 +709,14 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         }
     });
 
-    // enhance promise with request abortion
-    promise.abort = req.abort.bind(req);
+    // enhance promise with request cancelation
+    promise.abort = () => {
+
+        promise.aborted = true;
+        req.abort.bind(req);
+        return promise;
+    };
+
     // finally, send the stuff
     req.send(data);
 
