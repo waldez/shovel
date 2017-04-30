@@ -104,9 +104,9 @@ function objectStringify(object) {
     return `{${body}}`;
 }
 
-function decode(jsonString) {
+function decode(jsonString, userData) {
 
-    return parse.call(this, jsonString);
+    return parse.call(this, jsonString, userData);
 };
 
 function encode(json) {
@@ -124,13 +124,13 @@ function stringify(value) {
     }
 }
 
-function parse(jsonString) {
+function parse(jsonString, userData) {
 
     const json = JSON.parse(jsonString, (key, value) => {
 
         if (value && value.$$type && value.$$data) {
             const type = getTypeFromName(value.$$type, this.handlers);
-            return type.parse ? type.parse(value.$$data) : value;
+            return type && type.parse ? type.parse(value.$$data, userData) : value;
         }
 
         return value; // return the unchanged property value.
@@ -167,4 +167,3 @@ Object.assign(JSONE, prototype);
 JSONE.prototype = prototype;
 
 module.exports = JSONE;
-

@@ -24,6 +24,7 @@ const farmhash = require('farmhash');
 const Promise = require('bluebird');
 const Server = require('./server');
 const Wrapper = require('./wrapper');
+const Session = require('./session');
 const JSONE = require('./jsone');
 
 const DEFAULT_PORT = 31415;
@@ -48,6 +49,42 @@ const PERSISTENCE_ENUM = [
     'Session',          // lives 'till in session storage
     'Temporary'         // lives 'till sent
 ];
+
+class FunctionHandler {
+
+    constructor(id) {
+
+        this.id = id;
+        // if (typeof handlerFunction == 'function') {
+        //     let id = getUid();
+
+        //     this.call = function(...args) {
+
+        //         try {
+        //             var result = handlerFunction(...args);
+        //         } catch (error) {
+        //             return Promise.reject(error);
+        //         }
+
+        //         return Promise.resolve(result);
+        //     };
+
+        //     Object.defineProperties(this, {
+        //         id: {
+        //             get: () => id
+        //         }
+        //     });
+
+        // } else {
+        //     throw new TypeError('FunctionHandler constructor parameter is not a function!');
+        // }
+    }
+
+    static stringify(instance) {
+
+        return `{"id":"${instance.id}"}`;
+    }
+}
 
 class Shovel {
 
@@ -74,7 +111,7 @@ class Shovel {
                     const { typeHash, typeName } = Wrapper.getMeta(wrapper);
                     return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
                 },
-                parse: ({ uid, typeHash }) => {
+                parse: ({ uid, typeHash }, session) => {
 
                     let wrapper = this.wrappers.get(uid);
                     if (wrapper) {
@@ -85,7 +122,24 @@ class Shovel {
                     // TODO: better
                     return null;
                 }
+            },
+            FunctionHandler: {
+                name: 'FunctionHandler',
+                stringify: FunctionHandler.stringify,
+                parse: ({ id }, { session }) => {
+
+                    // const handler = session.getFnHandler(id);
+                    // if (handler) {
+                    //     // TODO: vytahnout funkci, ktera bude volana wrapperem!
+                    // } else {
+                    //     // TODO:
+                    //     // !! pridat handler do metadat oznaceny k odregistrovani na serveru
+                    // }
+                    // return handler.callback;
+                    return 'to be done';
+                }
             }
+
         };
 
         const sessionMap = new Map();
@@ -118,15 +172,17 @@ class Shovel {
             // be more clever... this is not nice solution
             if (request.url == '/foreverhook') {
                 const sessionId = request.headers['x-shovel-session'];
-                let sessionData = this.sessionMap.get(sessionId) || {};
+                let session = this.getSessionData(sessionId);
 
-                if (sessionData.foreverHook) {
-                    sessionData.foreverHook.reject({ aborted: 'true' });
-                }
+                session.rejectForeverHook({ aborted: 'true' });
 
-                sessionData.foreverHook = null;
+                // if (session.foreverHook) {
+                //     session.foreverHook.reject({ aborted: 'true' });
+                // }
 
-                this.sessionMap.set(sessionId, sessionData);
+                // session.foreverHook = null;
+
+                // this.sessionMap.set(sessionId, session);
             }
         });
 
@@ -238,13 +294,26 @@ class Shovel {
     test(str) {
 
         // send to each! this is for testing only!
-        this.sessionMap.forEach((sessionData, sessionId) => {
+        this.sessionMap.forEach((session, sessionId) => {
 
-            if (sessionData.foreverHook) {
-                sessionData.foreverHook.resolve({ data: str });
-                sessionData.foreverHook = null;
-            }
+            session.resolveForeverHook({ data: str });
+
+            // if (session.foreverHook) {
+            //     session.foreverHook.resolve({ data: str });
+            //     session.foreverHook = null;
+            // }
         });
+    }
+
+    getSessionData(sessionId) {
+        let session = this.sessionMap.get(sessionId);
+
+        if (!session) {
+            session = new Session(sessionId);
+            this.sessionMap.set(sessionId, session);
+        }
+
+        return session;
     }
 
     processForeverHook(requestData, request) {
@@ -255,25 +324,34 @@ class Shovel {
 
         return new Promise((resolve, reject) => {
 
-            let sessionData = this.sessionMap.get(sessionId) || {};
+            let session = this.getSessionData(sessionId);
 
-            if (sessionData.foreverHook) {
-                sessionData.foreverHook.reject({ aborted: 'true' });
-            }
+            // why?!?
+            // if (session.foreverHook) {
+            //     session.foreverHook.reject({ aborted: 'true' });
+            // }
 
-            sessionData.foreverHook = {
-                sessionId,
-                resolve,
-                reject
-            };
+            // session.foreverHook = {
+            //     sessionId,
+            //     resolve,
+            //     reject
+            // };
 
-            this.sessionMap.set(sessionId, sessionData);
+            session.setForeverHook(resolve, reject);
+
+            // this.sessionMap.set(sessionId, session);
         });
     }
 
     processRequest(requestData, request) {
 
-        requestData = this.jsone.decode(requestData);
+        const sessionId = request.headers['x-shovel-session'];
+        requestData = this.jsone.decode(requestData, {
+            session: this.getSessionData(sessionId)
+        });
+
+        console.log('!W! - requestData:\n', JSON.stringify(requestData, null, '\t'));
+
         let { action, path = 0, field, data } = requestData;
 
         if (!action) { // in future, in this case, we want to send some info data, or whatever

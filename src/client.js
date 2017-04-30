@@ -2,8 +2,7 @@
 const JSONE = require('./jsone');
 
 // 30 seconds hook timeout
-// const HOOK_TIMEOUT = 30 * 1000;
-const HOOK_TIMEOUT = 5 * 1000;
+const HOOK_TIMEOUT = 30 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 const Ξ = Symbol('private');
@@ -44,6 +43,49 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
     }
 };
 
+/**
+ * Simple function handler class
+ */
+class FunctionHandler {
+
+    constructor(handlerFunction) {
+
+        if (typeof handlerFunction == 'function') {
+            let id = getUid();
+
+            this.call = function(...args) {
+
+                try {
+                    var result = handlerFunction(...args);
+                } catch (error) {
+                    return Promise.reject(error);
+                }
+
+                return Promise.resolve(result);
+            };
+
+            Object.defineProperties(this, {
+                id: {
+                    get: () => id
+                }
+            });
+
+        } else {
+            throw new TypeError('FunctionHandler constructor parameter is not a function!');
+        }
+    }
+
+    static stringify(instance) {
+
+        return `{"id":"${instance.id}"}`;
+    }
+}
+
+/**
+ * Simple wrapper class
+ * @param {string} typeName
+ * @param {string} typeHash
+ */
 let Wrapper = function(typeName, typeHash) {
 
     Object.defineProperties(this, {
@@ -53,13 +95,19 @@ let Wrapper = function(typeName, typeHash) {
     });
 };
 
-function getUid() {
+function getUid(as32BitNumber) {
 
     const timePart = (new Date()).getTime();
-    const randomPart = (Math.random() * 1e9) | 0;
-    const modPart = randomPart % 15;
+    const rand = Math.random();
 
-    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+    if (as32BitNumber) {
+        const randomPart = (rand * MAX_UINT32) | 0;
+        return timePart ^ randomPart;
+    } else {
+        const randomPart = (rand * 1e9) | 0;
+        const modPart = randomPart % 15;
+        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+    }
 }
 
 function _w(instance) {
@@ -124,15 +172,36 @@ class ShovelClient {
         request = request.bind(null, processResponse);
         // clientId, <-client identifier
 
-        let that = this;
+        const boundShovel = this.shovel.bind(this);
+        const that = this;
         // typeHash:[WrapperClass].constructor
-        let wrappers = new Map();
+        const wrappers = new Map();
         // uid:[WrapperClass]
-        let instances = new Map();
-        let boundShovel = this.shovel.bind(this);
+        const instances = new Map();
+        // id:[FunctionHandler]
+        const fnHandlers = new Map();
+        const fn2Handlers = new WeakMap();
 
         // handlers for unknown types (Wrapper type)
-        let jsonHandlers = {
+        const jsonHandlers = {
+            FunctionHandler: {
+                name: 'FunctionHandler',
+                ctor: FunctionHandler.prototype.constructor,
+                stringify: FunctionHandler.stringify,
+                parse: ({ id, args, responseId }) => {
+
+                    // responseId - usefull for the response of the handler (if it will be sent to server)
+                    const handler = handlers.get(id);
+                    if (handler) {
+                        // TODO: vraci promise, takze bych teoreticky jeste mohl reagovat a poslat odpoved na server
+                        handler.call(args);
+                    } else {
+                        // TODO:
+                        // !! pridat handler do metadat oznaceny k odregistrovani na serveru
+                    }
+                    return handler;
+                }
+            },
             Wrapper: {
                 name: 'Wrapper',
                 ctor: Wrapper,
@@ -144,7 +213,7 @@ class ShovelClient {
                         return instance;
                     }
 
-                    let wrapperClass = wrappers.get(typeHash);
+                    const wrapperClass = wrappers.get(typeHash);
                     if (wrapperClass) {
                         return this[Ξ].addInstance(uid, wrapperClass.wrapper);
                     }
@@ -166,6 +235,8 @@ class ShovelClient {
             JSONE: jsone,
             wrappers,
             instances,
+            fnHandlers,
+            fn2Handlers,
             addWrapperClass: function(descriptor, typeName, typeHash) {
 
                 let wrapper = wrappers.get(typeHash);
@@ -198,18 +269,13 @@ class ShovelClient {
                 hookTimer = null;
                 // if there is pending request, cancel it
                 if (hookPromise) {
-
-                    console.log('!W! - aborting');
-
                     hookPromise.abort()
                         .then(() => {
 
-                            console.log(`!W! - then`);
                             this[Ξ].foreverHook();
                         })
                         .catch(() => {
 
-                            console.log(`!W! - catch`);
                             this[Ξ].foreverHook();
                         });
                     // hookPromise = null;
@@ -231,10 +297,10 @@ class ShovelClient {
 
                         if (hookPromise.aborted) {
 
-                            console.log(`!W! - request aborted`);
                             this[Ξ].foreverHook();
                         } else {
 
+                            // TODO: better
                             console.log('Forever hook error:', error);
                         }
 
@@ -244,8 +310,6 @@ class ShovelClient {
 
                 // set the timeout
                 hookTimer = setTimeout(() => {
-
-                    console.log(`!W! - starting hook by timer`);
 
                     // restarts the loop
                     this[Ξ].foreverHook();
@@ -261,12 +325,82 @@ class ShovelClient {
             options.port = servicePort;
 
             const headers = {
-                'X-Shovel-Session': getSessionId()
+                'x-shovel-session': getSessionId()
             };
 
             return request(options, data, headers);
         }.bind(this, serviceHost, servicePort);
 
+    }
+
+    /**
+     * @param  {function} handlerFunction
+     * @return {FunctionHandler}
+     */
+    registerHandler(handlerFunction) {
+
+        // TODO: make hash out of handlerFunction (or have WeakMap where key is this function)
+        // to be able determine, if duplicities are going on
+        if (typeof handlerFunction != 'function') {
+            throw new TypeError(`Trying to register ${typeof handlerFunction} instead of function!`);
+        }
+
+        let handler = this[Ξ].fn2Handlers.get(handlerFunction);
+
+        if (handler) {
+            return handler;
+        }
+
+        handler = new FunctionHandler(handlerFunction);
+        this[Ξ].fnHandlers.set(handler.id, handler);
+        this[Ξ].fn2Handlers.set(handlerFunction, handler);
+        return handler;
+    }
+
+    /**
+     * Returns handler or undefined
+     * @param  {string|function} handler - could be 'id' of handler as string
+     * or function (which was used for registering the handler)
+     * @return {?FunctionHandler}         [description]
+     */
+    getHandler(handler) {
+
+        return this[Ξ].fnHandlers.get(handler) || this[Ξ].fn2Handlers.get(handler);
+    }
+
+    /**
+     * [unregisterHandler description]
+     * @param  {function|string|FunctionHandler} handler
+     * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
+     */
+    unregisterHandler(handler) {
+
+        switch (typeof handler) {
+
+            case 'function':
+                // TODO: !!!
+                throw new Error('Not implemented yet!');
+                break;
+
+            case 'string':
+                // noop, already 'id' ..we hope!
+                break;
+
+            case 'object':
+
+                if (handler instanceof FunctionHandler) {
+                    handler = handler.id;
+                } else {
+                    throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                }
+                break;
+
+            default:
+                throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                break;
+        }
+
+        return this[Ξ].fnHandlers.delete(handler);
     }
 
     initialize() {

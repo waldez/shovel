@@ -2,41 +2,41 @@ var ShovelClient =
 /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
 /******/ 	var installedModules = {};
-
+/******/
 /******/ 	// The require function
 /******/ 	function __webpack_require__(moduleId) {
-
+/******/
 /******/ 		// Check if module is in cache
-/******/ 		if(installedModules[moduleId])
+/******/ 		if(installedModules[moduleId]) {
 /******/ 			return installedModules[moduleId].exports;
-
+/******/ 		}
 /******/ 		// Create a new module (and put it into the cache)
 /******/ 		var module = installedModules[moduleId] = {
 /******/ 			i: moduleId,
 /******/ 			l: false,
 /******/ 			exports: {}
 /******/ 		};
-
+/******/
 /******/ 		// Execute the module function
 /******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
-
+/******/
 /******/ 		// Flag the module as loaded
 /******/ 		module.l = true;
-
+/******/
 /******/ 		// Return the exports of the module
 /******/ 		return module.exports;
 /******/ 	}
-
-
+/******/
+/******/
 /******/ 	// expose the modules object (__webpack_modules__)
 /******/ 	__webpack_require__.m = modules;
-
+/******/
 /******/ 	// expose the module cache
 /******/ 	__webpack_require__.c = installedModules;
-
+/******/
 /******/ 	// identity function for calling harmony imports with the correct context
 /******/ 	__webpack_require__.i = function(value) { return value; };
-
+/******/
 /******/ 	// define getter function for harmony exports
 /******/ 	__webpack_require__.d = function(exports, name, getter) {
 /******/ 		if(!__webpack_require__.o(exports, name)) {
@@ -47,7 +47,7 @@ var ShovelClient =
 /******/ 			});
 /******/ 		}
 /******/ 	};
-
+/******/
 /******/ 	// getDefaultExport function for compatibility with non-harmony modules
 /******/ 	__webpack_require__.n = function(module) {
 /******/ 		var getter = module && module.__esModule ?
@@ -56,15 +56,15 @@ var ShovelClient =
 /******/ 		__webpack_require__.d(getter, 'a', getter);
 /******/ 		return getter;
 /******/ 	};
-
+/******/
 /******/ 	// Object.prototype.hasOwnProperty.call
 /******/ 	__webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
-
+/******/
 /******/ 	// __webpack_public_path__
 /******/ 	__webpack_require__.p = "";
-
+/******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = 2);
+/******/ 	return __webpack_require__(__webpack_require__.s = 1);
 /******/ })
 /************************************************************************/
 /******/ ([
@@ -73,11 +73,10 @@ var ShovelClient =
 
 "use strict";
 
-const JSONE = __webpack_require__(1);
+const JSONE = __webpack_require__(2);
 
 // 30 seconds hook timeout
-// const HOOK_TIMEOUT = 30 * 1000;
-const HOOK_TIMEOUT = 5 * 1000;
+const HOOK_TIMEOUT = 30 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 const Ξ = Symbol('private');
@@ -118,6 +117,49 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
     }
 };
 
+/**
+ * Simple function handler class
+ */
+class FunctionHandler {
+
+    constructor(handlerFunction) {
+
+        if (typeof handlerFunction == 'function') {
+            let id = getUid();
+
+            this.call = function(...args) {
+
+                try {
+                    var result = handlerFunction(...args);
+                } catch (error) {
+                    return Promise.reject(error);
+                }
+
+                return Promise.resolve(result);
+            };
+
+            Object.defineProperties(this, {
+                id: {
+                    get: () => id
+                }
+            });
+
+        } else {
+            throw new TypeError('FunctionHandler constructor parameter is not a function!');
+        }
+    }
+
+    static stringify(instance) {
+
+        return `{"id":"${instance.id}"}`;
+    }
+}
+
+/**
+ * Simple wrapper class
+ * @param {string} typeName
+ * @param {string} typeHash
+ */
 let Wrapper = function(typeName, typeHash) {
 
     Object.defineProperties(this, {
@@ -127,13 +169,19 @@ let Wrapper = function(typeName, typeHash) {
     });
 };
 
-function getUid() {
+function getUid(as32BitNumber) {
 
     const timePart = (new Date()).getTime();
-    const randomPart = (Math.random() * 1e9) | 0;
-    const modPart = randomPart % 15;
+    const rand = Math.random();
 
-    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+    if (as32BitNumber) {
+        const randomPart = (rand * MAX_UINT32) | 0;
+        return timePart ^ randomPart;
+    } else {
+        const randomPart = (rand * 1e9) | 0;
+        const modPart = randomPart % 15;
+        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+    }
 }
 
 function _w(instance) {
@@ -198,15 +246,36 @@ class ShovelClient {
         request = request.bind(null, processResponse);
         // clientId, <-client identifier
 
-        let that = this;
+        const boundShovel = this.shovel.bind(this);
+        const that = this;
         // typeHash:[WrapperClass].constructor
-        let wrappers = new Map();
+        const wrappers = new Map();
         // uid:[WrapperClass]
-        let instances = new Map();
-        let boundShovel = this.shovel.bind(this);
+        const instances = new Map();
+        // id:[FunctionHandler]
+        const fnHandlers = new Map();
+        const fn2Handlers = new WeakMap();
 
         // handlers for unknown types (Wrapper type)
-        let jsonHandlers = {
+        const jsonHandlers = {
+            FunctionHandler: {
+                name: 'FunctionHandler',
+                ctor: FunctionHandler.prototype.constructor,
+                stringify: FunctionHandler.stringify,
+                parse: ({ id, args, responseId }) => {
+
+                    // responseId - usefull for the response of the handler (if it will be sent to server)
+                    const handler = handlers.get(id);
+                    if (handler) {
+                        // TODO: vraci promise, takze bych teoreticky jeste mohl reagovat a poslat odpoved na server
+                        handler.call(args);
+                    } else {
+                        // TODO:
+                        // !! pridat handler do metadat oznaceny k odregistrovani na serveru
+                    }
+                    return handler;
+                }
+            },
             Wrapper: {
                 name: 'Wrapper',
                 ctor: Wrapper,
@@ -218,7 +287,7 @@ class ShovelClient {
                         return instance;
                     }
 
-                    let wrapperClass = wrappers.get(typeHash);
+                    const wrapperClass = wrappers.get(typeHash);
                     if (wrapperClass) {
                         return this[Ξ].addInstance(uid, wrapperClass.wrapper);
                     }
@@ -240,6 +309,8 @@ class ShovelClient {
             JSONE: jsone,
             wrappers,
             instances,
+            fnHandlers,
+            fn2Handlers,
             addWrapperClass: function(descriptor, typeName, typeHash) {
 
                 let wrapper = wrappers.get(typeHash);
@@ -272,18 +343,13 @@ class ShovelClient {
                 hookTimer = null;
                 // if there is pending request, cancel it
                 if (hookPromise) {
-
-                    console.log('!W! - aborting');
-
                     hookPromise.abort()
                         .then(() => {
 
-                            console.log(`!W! - then`);
                             this[Ξ].foreverHook();
                         })
                         .catch(() => {
 
-                            console.log(`!W! - catch`);
                             this[Ξ].foreverHook();
                         });
                     // hookPromise = null;
@@ -305,10 +371,10 @@ class ShovelClient {
 
                         if (hookPromise.aborted) {
 
-                            console.log(`!W! - request aborted`);
                             this[Ξ].foreverHook();
                         } else {
 
+                            // TODO: better
                             console.log('Forever hook error:', error);
                         }
 
@@ -318,8 +384,6 @@ class ShovelClient {
 
                 // set the timeout
                 hookTimer = setTimeout(() => {
-
-                    console.log(`!W! - starting hook by timer`);
 
                     // restarts the loop
                     this[Ξ].foreverHook();
@@ -335,12 +399,82 @@ class ShovelClient {
             options.port = servicePort;
 
             const headers = {
-                'X-Shovel-Session': getSessionId()
+                'x-shovel-session': getSessionId()
             };
 
             return request(options, data, headers);
         }.bind(this, serviceHost, servicePort);
 
+    }
+
+    /**
+     * @param  {function} handlerFunction
+     * @return {FunctionHandler}
+     */
+    registerHandler(handlerFunction) {
+
+        // TODO: make hash out of handlerFunction (or have WeakMap where key is this function)
+        // to be able determine, if duplicities are going on
+        if (typeof handlerFunction != 'function') {
+            throw new TypeError(`Trying to register ${typeof handlerFunction} instead of function!`);
+        }
+
+        let handler = this[Ξ].fn2Handlers.get(handlerFunction);
+
+        if (handler) {
+            return handler;
+        }
+
+        handler = new FunctionHandler(handlerFunction);
+        this[Ξ].fnHandlers.set(handler.id, handler);
+        this[Ξ].fn2Handlers.set(handlerFunction, handler);
+        return handler;
+    }
+
+    /**
+     * Returns handler or undefined
+     * @param  {string|function} handler - could be 'id' of handler as string
+     * or function (which was used for registering the handler)
+     * @return {?FunctionHandler}         [description]
+     */
+    getHandler(handler) {
+
+        return this[Ξ].fnHandlers.get(handler) || this[Ξ].fn2Handlers.get(handler);
+    }
+
+    /**
+     * [unregisterHandler description]
+     * @param  {function|string|FunctionHandler} handler
+     * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
+     */
+    unregisterHandler(handler) {
+
+        switch (typeof handler) {
+
+            case 'function':
+                // TODO: !!!
+                throw new Error('Not implemented yet!');
+                break;
+
+            case 'string':
+                // noop, already 'id' ..we hope!
+                break;
+
+            case 'object':
+
+                if (handler instanceof FunctionHandler) {
+                    handler = handler.id;
+                } else {
+                    throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                }
+                break;
+
+            default:
+                throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                break;
+        }
+
+        return this[Ξ].fnHandlers.delete(handler);
     }
 
     initialize() {
@@ -458,6 +592,104 @@ module.exports = ShovelClient;
 "use strict";
 
 
+const ShovelClient = __webpack_require__(0);
+
+if (typeof window.sessionStorage != 'object') {
+    throw new Error('Incompatible client for Shovel! Unsupported window.sessionStorage.');
+}
+
+const STORAGE_SESSION_KEY = 'shovelSessionId';
+
+const getSessionId = () => {
+
+    let sessionId = window.sessionStorage.getItem(STORAGE_SESSION_KEY);
+
+    if (!sessionId) {
+        sessionId = ShovelClient.generateSessionId();
+        window.sessionStorage.setItem(STORAGE_SESSION_KEY, sessionId);
+    }
+
+    return sessionId;
+};
+
+const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
+
+    let req;
+    let promise = new Promise((resolve, reject) => {
+
+        data = typeof data === 'object' ? JSON.stringify(data) : data;
+        req = new XMLHttpRequest();
+
+
+        // TODO: ?? inspiration
+        // var xhr = new XMLHttpRequest();
+        // console.log('UNSENT', xhr.status);
+
+        // xhr.open('GET', '/server', true);
+        // console.log('OPENED', xhr.status);
+
+        // xhr.onprogress = function () {
+        //   console.log('LOADING', xhr.status);
+        // };
+
+        // xhr.onload = function () {
+        //   console.log('DONE', xhr.status);
+        // };
+
+        // xhr.send(null);
+
+
+        req.error = (error) => {
+
+            reject({
+                state: req.readyState,
+                status: req.status,
+                response: req.responseText,
+                error
+            });
+        };
+
+        req.onreadystatechange = () => {
+
+            if (req.readyState === XMLHttpRequest.DONE) {
+                processResponse(resolve, reject, req.responseText, req.status, /*req.statusMessage*/ undefined, bodyParser);
+            }
+        };
+        req.open(method, `http://${host}:${port}${path}`, true);
+
+        if (typeof headers == 'object') {
+            for (let headerName in headers) {
+                if (headers.hasOwnProperty(headerName)) {
+                    req.setRequestHeader(headerName, headers[headerName]);
+                }
+            }
+        }
+    });
+
+    // enhance promise with request cancelation
+    promise.abort = () => {
+
+        promise.aborted = true;
+        req.abort.bind(req);
+        return promise;
+    };
+
+    // finally, send the stuff
+    req.send(data);
+
+    return promise;
+};
+
+module.exports = ShovelClient.create.bind(null, request, getSessionId);
+
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
 function isInheritable(type) { return type.ctor || (typeof type.instanceOf == 'function'); }
 function getNullStr(value) { return 'null'; }
 function stringifyExtended(type, body) {
@@ -562,9 +794,9 @@ function objectStringify(object) {
     return `{${body}}`;
 }
 
-function decode(jsonString) {
+function decode(jsonString, userData) {
 
-    return parse.call(this, jsonString);
+    return parse.call(this, jsonString, userData);
 };
 
 function encode(json) {
@@ -582,13 +814,13 @@ function stringify(value) {
     }
 }
 
-function parse(jsonString) {
+function parse(jsonString, userData) {
 
     const json = JSON.parse(jsonString, (key, value) => {
 
         if (value && value.$$type && value.$$data) {
             const type = getTypeFromName(value.$$type, this.handlers);
-            return type.parse ? type.parse(value.$$data) : value;
+            return type && type.parse ? type.parse(value.$$data, userData) : value;
         }
 
         return value; // return the unchanged property value.
@@ -625,105 +857,6 @@ Object.assign(JSONE, prototype);
 JSONE.prototype = prototype;
 
 module.exports = JSONE;
-
-
-
-/***/ }),
-/* 2 */
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-const ShovelClient = __webpack_require__(0);
-
-if (typeof window.sessionStorage != 'object') {
-    throw new Error('Incompatible client for Shovel! Unsupported window.sessionStorage.');
-}
-
-const STORAGE_SESSION_KEY = 'shovelSessionId';
-
-const getSessionId = () => {
-
-    let sessionId = window.sessionStorage.getItem(STORAGE_SESSION_KEY);
-
-    if (!sessionId) {
-        sessionId = ShovelClient.generateSessionId();
-        window.sessionStorage.setItem(STORAGE_SESSION_KEY, sessionId);
-    }
-
-    return sessionId;
-};
-
-const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
-
-    let req;
-    let promise = new Promise((resolve, reject) => {
-
-        data = typeof data === 'object' ? JSON.stringify(data) : data;
-        req = new XMLHttpRequest();
-
-
-        // TODO: ?? inspiration
-        // var xhr = new XMLHttpRequest();
-        // console.log('UNSENT', xhr.status);
-
-        // xhr.open('GET', '/server', true);
-        // console.log('OPENED', xhr.status);
-
-        // xhr.onprogress = function () {
-        //   console.log('LOADING', xhr.status);
-        // };
-
-        // xhr.onload = function () {
-        //   console.log('DONE', xhr.status);
-        // };
-
-        // xhr.send(null);
-
-
-        req.error = (error) => {
-
-            reject({
-                state: req.readyState,
-                status: req.status,
-                response: req.responseText,
-                error
-            });
-        };
-
-        req.onreadystatechange = () => {
-
-            if (req.readyState === XMLHttpRequest.DONE) {
-                processResponse(resolve, reject, req.responseText, req.status, /*req.statusMessage*/ undefined, bodyParser);
-            }
-        };
-        req.open(method, `http://${host}:${port}${path}`, true);
-
-        if (typeof headers == 'object') {
-            for (let headerName in headers) {
-                if (headers.hasOwnProperty(headerName)) {
-                    req.setRequestHeader(headerName, headers[headerName]);
-                }
-            }
-        }
-    });
-
-    // enhance promise with request cancelation
-    promise.abort = () => {
-
-        promise.aborted = true;
-        req.abort.bind(req);
-        return promise;
-    };
-
-    // finally, send the stuff
-    req.send(data);
-
-    return promise;
-};
-
-module.exports = ShovelClient.create.bind(null, request, getSessionId);
 
 
 /***/ })
