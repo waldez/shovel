@@ -52,37 +52,16 @@ const PERSISTENCE_ENUM = [
 
 class FunctionHandler {
 
-    constructor(id) {
+    constructor(id, callback) {
 
-        this.id = id;
-        // if (typeof handlerFunction == 'function') {
-        //     let id = getUid();
-
-        //     this.call = function(...args) {
-
-        //         try {
-        //             var result = handlerFunction(...args);
-        //         } catch (error) {
-        //             return Promise.reject(error);
-        //         }
-
-        //         return Promise.resolve(result);
-        //     };
-
-        //     Object.defineProperties(this, {
-        //         id: {
-        //             get: () => id
-        //         }
-        //     });
-
-        // } else {
-        //     throw new TypeError('FunctionHandler constructor parameter is not a function!');
-        // }
-    }
-
-    static stringify(instance) {
-
-        return `{"id":"${instance.id}"}`;
+        Object.defineProperties(this, {
+            id: {
+                get: () => id
+            },
+            callback: {
+                get: () => callback
+            }
+        });
     }
 }
 
@@ -125,18 +104,16 @@ class Shovel {
             },
             FunctionHandler: {
                 name: 'FunctionHandler',
-                stringify: FunctionHandler.stringify,
+                stringify: instance => `{"id":"${instance.id}}"`,
                 parse: ({ id }, { session }) => {
 
-                    // const handler = session.getFnHandler(id);
-                    // if (handler) {
-                    //     // TODO: vytahnout funkci, ktera bude volana wrapperem!
-                    // } else {
-                    //     // TODO:
-                    //     // !! pridat handler do metadat oznaceny k odregistrovani na serveru
-                    // }
-                    // return handler.callback;
-                    return 'to be done';
+                    let handler = session.getFnHandler(id);
+                    if (!handler) {
+                        handler = new FunctionHandler(id, (...args) => session.consumeHandlerResult(id, args));
+                        session.setFnHandler(handler);
+                    }
+                    // !! pridat handler do metadat oznaceny k odregistrovani na serveru
+                    return handler.callback;
                 }
             }
 
@@ -173,16 +150,7 @@ class Shovel {
             if (request.url == '/foreverhook') {
                 const sessionId = request.headers['x-shovel-session'];
                 let session = this.getSessionData(sessionId);
-
                 session.rejectForeverHook({ aborted: 'true' });
-
-                // if (session.foreverHook) {
-                //     session.foreverHook.reject({ aborted: 'true' });
-                // }
-
-                // session.foreverHook = null;
-
-                // this.sessionMap.set(sessionId, session);
             }
         });
 
@@ -290,21 +258,6 @@ class Shovel {
             ]);
     }
 
-    // TODO: smazat!
-    test(str) {
-
-        // send to each! this is for testing only!
-        this.sessionMap.forEach((session, sessionId) => {
-
-            session.resolveForeverHook({ data: str });
-
-            // if (session.foreverHook) {
-            //     session.foreverHook.resolve({ data: str });
-            //     session.foreverHook = null;
-            // }
-        });
-    }
-
     getSessionData(sessionId) {
         let session = this.sessionMap.get(sessionId);
 
@@ -319,27 +272,20 @@ class Shovel {
     processForeverHook(requestData, request) {
 
         const sessionId = request.headers['x-shovel-session'];
-        // do not need
+        // do not need - for now!
         // requestData = this.jsone.decode(requestData);
 
         return new Promise((resolve, reject) => {
 
             let session = this.getSessionData(sessionId);
+            let resolveEncoded = data => resolve(this.jsone.encode(data));
 
             // why?!?
             // if (session.foreverHook) {
             //     session.foreverHook.reject({ aborted: 'true' });
             // }
 
-            // session.foreverHook = {
-            //     sessionId,
-            //     resolve,
-            //     reject
-            // };
-
-            session.setForeverHook(resolve, reject);
-
-            // this.sessionMap.set(sessionId, session);
+            session.setForeverHook(resolveEncoded, reject);
         });
     }
 
@@ -349,8 +295,6 @@ class Shovel {
         requestData = this.jsone.decode(requestData, {
             session: this.getSessionData(sessionId)
         });
-
-        console.log('!W! - requestData:\n', JSON.stringify(requestData, null, '\t'));
 
         let { action, path = 0, field, data } = requestData;
 

@@ -127,7 +127,7 @@ class FunctionHandler {
         if (typeof handlerFunction == 'function') {
             let id = getUid();
 
-            this.call = function(...args) {
+            this.call = function(args) {
 
                 try {
                     var result = handlerFunction(...args);
@@ -336,8 +336,6 @@ class ShovelClient {
             }.bind(that),
             foreverHook: function() {
 
-                console.log(`--== Forever hook start new cycle ==--`);
-
                 // clear the timer
                 clearTimeout(hookTimer);
                 hookTimer = null;
@@ -352,7 +350,6 @@ class ShovelClient {
 
                             this[Ξ].foreverHook();
                         });
-                    // hookPromise = null;
                 }
 
                 // needed this direct promise, to be able call abort
@@ -363,7 +360,18 @@ class ShovelClient {
                         // fullfilled, so clear it
                         hookPromise = null;
 
-                        console.log('!W! - data:', data);
+                        // console.log('!W! - data:\n', JSON.stringify(data, null, '\t'));
+
+                        if (Array.isArray(data)) {
+                            data.forEach(handlerData => {
+
+                                let handler = this.getHandler(handlerData.id);
+                                // could return promise, which could be sent back to server...
+                                let result = Promise.resolve(handler.call(handlerData.data));
+                            });
+                        } else {
+                            // TODO: what? some kind of error..
+                        }
 
                         // keep the cycle alive
                         this[Ξ].foreverHook();

@@ -56,14 +56,15 @@ function setter(name, instance, value) {
 }
 
 function getProps(obj) {
-    var p = [];
+
+    var props = new Set();
     for (; obj != Object.prototype; obj = Object.getPrototypeOf(obj)) {
-        var op = Object.getOwnPropertyNames(obj);
-        for (var i = 0; i<op.length; i++)
-            if (p.indexOf(op[i]) == -1)
-                 p.push(op[i]);
+        var ownProps = Object.getOwnPropertyNames(obj);
+        for (var i = 0; i < ownProps.length; i++) {
+            props.add(ownProps[i]);
+        }
     }
-    return p;
+    return props;
 }
 
 // private property symbols
@@ -82,14 +83,13 @@ function wrap(instance, wrapper, options) {
     let descriptor = wrapper[_private].descriptor;
     let props = getProps(instance);
 
-    for (var i = props.length - 1; i >= 0; i--) {
-        let prop = props[i];
+    props.forEach(prop => {
         if (options.proccessIherited || instance.hasOwnProperty(prop)) {
             // sanity check
             if (typeof wrapper[prop] != 'undefined') {
                 // it basically means, there are Object properties which we don't want to override
                 // console.log('Ignored property:', prop);
-                continue;
+                return;
             }
 
             let value = instance[prop];
@@ -142,7 +142,7 @@ function wrap(instance, wrapper, options) {
                 });
             }
         }
-    }
+    });
 }
 
 function safeStaticGetter(prop, instance) {

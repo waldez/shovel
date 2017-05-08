@@ -6,6 +6,8 @@ class Session {
 
         this.foreverHook = null;
         this.functionHandlers = new Map();
+        this.outbox = [];
+        this.scheduledOutboxFlush = false;
 
         Object.defineProperties(this, {
             id: {
@@ -14,12 +16,18 @@ class Session {
         });
     }
 
-    setForeverHook(reject, resolve) {
+    setForeverHook(resolve, reject) {
+
+        // TODO: here I can set timestamp, which can be used to check, if the session is alive
 
         this.foreverHook = {
-            reject,
-            resolve
+            resolve,
+            reject
         };
+
+        if (this.scheduledOutboxFlush) {
+            this.tryFlushOutbox();
+        }
     }
 
     resolveForeverHook(data) {
@@ -48,8 +56,27 @@ class Session {
         return this.functionHandlers.set(handler.id, handler);
     }
 
-    callFnHandler(id, args) {
+    tryFlushOutbox() {
 
+        if (this.outbox.length > 0 && this.foreverHook) {
+            this.scheduledOutboxFlush = false;
+            // FLUSH IT!
+            let data = this.outbox;
+            this.outbox = [];
+            this.resolveForeverHook(data);
+        } else {
+            // noop, we wait for another forever hook..
+        }
+    }
+
+    consumeHandlerResult(id, data) {
+
+        this.outbox.push({ id, data });
+        if (!this.scheduledOutboxFlush) {
+            this.scheduledOutboxFlush = true;
+            // give the engine some time to aggregate more data (maybe)
+            process.nextTick(this.tryFlushOutbox.bind(this));
+        }
     }
 }
 
