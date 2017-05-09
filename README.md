@@ -18,6 +18,17 @@ Via npm:
 $ npm install --save https://github.com/waldez/shovel.git
 ```
 
+### Known issues / missing esentials
+ * __client__ - pending requests on client (they don't abort correctly and cumulate on client)
+ * __client__ - forever hook abort causes exception on client
+ * __server__ - missing global identifier for globaly refistered instances
+ * __server__ - missing automatic (session) registered instances. meaning, we want to register (to session) all instances returned by globabl wrappers
+ * __server__ - session manager (keep track of session life by setting timestamps on `setForeverHook` function)
+ * __server__ - automatic handler registration
+ * (server/client) support for binary data (buffers/typed arrays)
+ * __client__ - keep track of registered wrappers using headers (array of IDs)
+ * __server__ - separate server part from implicit HTTP server implementation (in our case native http.server) and make it, so *Shovel* could be just one route/endpoint of the http server
+
 ### Usage
 
 Example of server-side usage:
@@ -150,5 +161,5 @@ function runMyStuff(shovel) {
 ```
 
 ### TODO-list
- - support for hooks/handlers (infinite callbacks done via posponed request/response)
  - auto-register of object/class instances returned by already registered objects/instances
+ - session lifetime manager
