@@ -1,6 +1,6 @@
 SHOVEL
 ======
-(Shit Happens Online Via Library)
+(Shit Happens Online Via Epic Library)
 
 ### Disclaimer
 This is POC (proof of concept)! It's not nice... It's buggy and needs lots more love & coding. Improvements have to be done...
