@@ -21,7 +21,7 @@ $ npm install --save https://github.com/waldez/shovel.git
 ### Known issues / missing esentials
  * __client__ - pending requests on client (they don't abort correctly and cumulate on client)
  * __client__ - forever hook abort causes exception on client
- * __server__ - missing global identifier for globaly refistered instances
+ * __server__ - missing global identifier for globaly registered instances
  * __server__ - missing automatic (session) registered instances. meaning, we want to register (to session) all instances returned by globabl wrappers
  * __server__ - session manager (keep track of session life by setting timestamps on `setForeverHook` function)
  * __server__ - automatic handler registration

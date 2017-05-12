@@ -58,7 +58,7 @@ function setter(name, instance, value) {
 function getProps(obj) {
 
     var props = new Set();
-    for (; obj != Object.prototype; obj = Object.getPrototypeOf(obj)) {
+    for (; obj && obj != Object.prototype; obj = Object.getPrototypeOf(obj)) {
         var ownProps = Object.getOwnPropertyNames(obj);
         for (var i = 0; i < ownProps.length; i++) {
             props.add(ownProps[i]);

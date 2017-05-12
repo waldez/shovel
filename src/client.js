@@ -286,8 +286,6 @@ class ShovelClient {
                         // fullfilled, so clear it
                         hookPromise = null;
 
-                        // console.log('!W! - data:\n', JSON.stringify(data, null, '\t'));
-
                         if (Array.isArray(data)) {
                             data.forEach(handlerData => {
 
