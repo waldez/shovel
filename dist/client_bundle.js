@@ -79,7 +79,6 @@ const JSONE = __webpack_require__(2);
 const HOOK_TIMEOUT = 30 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
-const Ξ = Symbol('private');
 
 const ACTIONS = {
     list: 'list',
@@ -243,11 +242,7 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 class ShovelClient {
     constructor({ serviceHost = 'localhost', servicePort = '31415', request, getSessionId }) {
 
-        request = request.bind(null, processResponse);
-        // clientId, <-client identifier
-
-        const boundShovel = this.shovel.bind(this);
-        const that = this;
+        const boundShovel = shovel.bind(this);
         // typeHash:[WrapperClass].constructor
         const wrappers = new Map();
         // uid:[WrapperClass]
@@ -289,7 +284,7 @@ class ShovelClient {
 
                     const wrapperClass = wrappers.get(typeHash);
                     if (wrapperClass) {
-                        return this[Ξ].addInstance(uid, wrapperClass.wrapper);
+                        return addInstance(uid, wrapperClass.wrapper);
                     }
 
                     // TODO: better
@@ -304,104 +299,11 @@ class ShovelClient {
 
         const jsone = new JSONE({ handlers: jsonHandlers });
         const bodyParser = jsone.decode.bind(jsone);
+
         // private stuff
-        this[Ξ] = {
-            JSONE: jsone,
-            wrappers,
-            instances,
-            fnHandlers,
-            fn2Handlers,
-            addWrapperClass: function(descriptor, typeName, typeHash) {
+        // =============
 
-                let wrapper = wrappers.get(typeHash);
-                if (!wrapper) {
-                    wrapper = createWrapperClass(descriptor, typeName, typeHash, boundShovel);
-                    wrappers.set(typeHash, {
-                        wrapper,
-                        descriptor,
-                        typeName
-                    });
-                }
-                return wrapper;
-            }.bind(that),
-            getWrapperClass: function(typeHash) { return wrappers.get(typeHash); }.bind(that),
-            addInstance: function(uid, WrapperClass) {
-
-                let instance = instances.get(uid);
-                if (!instance) {
-                    instance = new WrapperClass(uid);
-                    instances.set(uid, instance);
-                }
-                return instance;
-            }.bind(that),
-            foreverHook: function() {
-
-                // clear the timer
-                clearTimeout(hookTimer);
-                hookTimer = null;
-                // if there is pending request, cancel it
-                if (hookPromise) {
-                    hookPromise.abort()
-                        .then(() => {
-
-                            this[Ξ].foreverHook();
-                        })
-                        .catch(() => {
-
-                            this[Ξ].foreverHook();
-                        });
-                }
-
-                // needed this direct promise, to be able call abort
-                hookPromise = this.request({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
-                hookPromise
-                    .then(data => {
-
-                        // fullfilled, so clear it
-                        hookPromise = null;
-
-                        // console.log('!W! - data:\n', JSON.stringify(data, null, '\t'));
-
-                        if (Array.isArray(data)) {
-                            data.forEach(handlerData => {
-
-                                let handler = this.getHandler(handlerData.id);
-                                // could return promise, which could be sent back to server...
-                                let result = Promise.resolve(handler.call(handlerData.data));
-                            });
-                        } else {
-                            // TODO: what? some kind of error..
-                        }
-
-                        // keep the cycle alive
-                        this[Ξ].foreverHook();
-                    }, error => {
-
-                        if (hookPromise.aborted) {
-
-                            this[Ξ].foreverHook();
-                        } else {
-
-                            // TODO: better
-                            console.log('Forever hook error:', error);
-                        }
-
-                        // fullfilled with error, so clear it
-                        hookPromise = null;
-                    });
-
-                // set the timeout
-                hookTimer = setTimeout(() => {
-
-                    // restarts the loop
-                    this[Ξ].foreverHook();
-                }, HOOK_TIMEOUT);
-
-            }.bind(that)
-        };
-
-        this.getServiceInfo = () => ({ serviceHost, servicePort });
-        this.request = function(serviceHost, servicePort, options = {}, data) {
+        function boundRequest(options = {}, data) {
 
             options.host = serviceHost;
             options.port = servicePort;
@@ -410,167 +312,250 @@ class ShovelClient {
                 'x-shovel-session': getSessionId()
             };
 
-            return request(options, data, headers);
-        }.bind(this, serviceHost, servicePort);
-
-    }
-
-    /**
-     * @param  {function} handlerFunction
-     * @return {FunctionHandler}
-     */
-    registerHandler(handlerFunction) {
-
-        // TODO: make hash out of handlerFunction (or have WeakMap where key is this function)
-        // to be able determine, if duplicities are going on
-        if (typeof handlerFunction != 'function') {
-            throw new TypeError(`Trying to register ${typeof handlerFunction} instead of function!`);
-        }
-
-        let handler = this[Ξ].fn2Handlers.get(handlerFunction);
-
-        if (handler) {
-            return handler;
-        }
-
-        handler = new FunctionHandler(handlerFunction);
-        this[Ξ].fnHandlers.set(handler.id, handler);
-        this[Ξ].fn2Handlers.set(handlerFunction, handler);
-        return handler;
-    }
-
-    /**
-     * Returns handler or undefined
-     * @param  {string|function} handler - could be 'id' of handler as string
-     * or function (which was used for registering the handler)
-     * @return {?FunctionHandler}         [description]
-     */
-    getHandler(handler) {
-
-        return this[Ξ].fnHandlers.get(handler) || this[Ξ].fn2Handlers.get(handler);
-    }
-
-    /**
-     * [unregisterHandler description]
-     * @param  {function|string|FunctionHandler} handler
-     * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
-     */
-    unregisterHandler(handler) {
-
-        switch (typeof handler) {
-
-            case 'function':
-                // TODO: !!!
-                throw new Error('Not implemented yet!');
-                break;
-
-            case 'string':
-                // noop, already 'id' ..we hope!
-                break;
-
-            case 'object':
-
-                if (handler instanceof FunctionHandler) {
-                    handler = handler.id;
-                } else {
-                    throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
-                }
-                break;
-
-            default:
-                throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
-                break;
-        }
-
-        return this[Ξ].fnHandlers.delete(handler);
-    }
-
-    initialize() {
-
-        this[Ξ].foreverHook();
-        return this.list(true).then(() => this);
-    }
-
-    get(uid) {
-
-        return this[Ξ].instances.get(uid);
-    }
-
-    list(forceRequest = false) {
-
-        if (forceRequest) {
-            let postData = { action: ACTIONS.list };
-
-            return this.request({ method: 'POST', path: url }, postData)
-                .then(data => {
-
-                    let list = [];
-                    for (let typeHash in data) {
-                        let { descriptor, typeName, instances } = data[typeHash];
-                        let WrapperClass = this[Ξ].addWrapperClass(descriptor, typeName, Number(typeHash));
-
-                        instances.forEach(uid => {
-
-                            this[Ξ].addInstance(uid, WrapperClass);
-                        });
-
-                        list.push({ typeName, instances });
-                    }
-
-                    return list;
-                });
-        } else {
-            let types = new Map();
-            this[Ξ].instances.forEach((instance, uid) => {
-
-                let { typeName, typeHash } = instance[TYPE_KEY];
-                let typeInfo = types.get(typeHash) || {
-                    typeName,
-                    instances: []
-                };
-
-                typeInfo.instances.push(uid);
-                types.set(typeHash, typeInfo);
-
-            });
-
-            return Array.from(types.values());
-        }
-    }
-
-    /**
-     * shovels the data to server, process response and returns appropriate response
-     * @param  {string} uid
-     * @param  {string} action
-     * @param  {string} name
-     * @param  {Array<string>} args
-     * @return {Promise}
-     */
-    shovel(uid, action, name, args) {
-
-        const jsone = this[Ξ].JSONE;
-        // TODO: encode args(data) to store types etc..
-        const bodyParser = jsone.decode.bind(jsone);
-
-        let postData = {
-            action,
-            path: uid,
-            field: name,
-            data: args
-            // TODO: in the future, generate UUID for the request
+            return request(processResponse, options, data, headers);
         };
 
-        return this.request({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
-            .then(([metadata, data]) => {
+        function addWrapperClass(descriptor, typeName, typeHash) {
 
-                // TODO: decode data! and much more (like raise Shovel event, log etc)
-                return data[uid].data;
-            })
-            .catch(error => {
+            let wrapper = wrappers.get(typeHash);
+            if (!wrapper) {
+                wrapper = createWrapperClass(descriptor, typeName, typeHash, boundShovel);
+                wrappers.set(typeHash, {
+                    wrapper,
+                    descriptor,
+                    typeName
+                });
+            }
+            return wrapper;
+        }
 
-                // TODO: log error, raise Shovel event etc..
-                return Promise.reject(error);
-            });
+        function getWrapperClass(typeHash) {
+            return wrappers.get(typeHash);
+        }
+
+        function addInstance(uid, WrapperClass) {
+
+            let instance = instances.get(uid);
+            if (!instance) {
+                instance = new WrapperClass(uid);
+                instances.set(uid, instance);
+            }
+            return instance;
+        }
+
+        const foreverHook = () => {
+
+            // clear the timer
+            clearTimeout(hookTimer);
+            hookTimer = null;
+            // if there is pending request, cancel it
+            if (hookPromise) {
+                hookPromise.abort()
+                    .then(foreverHook)
+                    .catch(foreverHook);
+            }
+
+            // needed this direct promise, to be able call abort
+            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
+            hookPromise
+                .then(data => {
+
+                    // fullfilled, so clear it
+                    hookPromise = null;
+
+                    if (Array.isArray(data)) {
+                        data.forEach(handlerData => {
+
+                            let handler = this.getHandler(handlerData.id);
+                            // could return promise, which could be sent back to server...
+                            let result = Promise.resolve(handler.call(handlerData.data));
+                        });
+                    } else {
+                        // TODO: what? some kind of error..
+                    }
+
+                    // keep the cycle alive
+                    foreverHook();
+                }, error => {
+
+                    if (hookPromise.aborted) {
+
+                        foreverHook();
+                    } else {
+
+                        // TODO: better
+                        console.log('Forever hook error:', error);
+                    }
+
+                    // fullfilled with error, so clear it
+                    hookPromise = null;
+                });
+
+            // set the timeout
+            hookTimer = setTimeout(foreverHook, HOOK_TIMEOUT);
+        };
+
+        /**
+         * shovels the data to server, process response and returns appropriate response
+         * @param  {string} uid
+         * @param  {string} action
+         * @param  {string} name
+         * @param  {Array<string>} args
+         * @return {Promise}
+         */
+        function shovel(uid, action, name, args) {
+
+            // TODO: encode args(data) to store types etc..
+            const bodyParser = jsone.decode.bind(jsone);
+
+            let postData = {
+                action,
+                path: uid,
+                field: name,
+                data: args
+                // TODO: in the future, generate UUID for the request
+            };
+
+            return boundRequest({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
+                .then(([metadata, data]) => {
+
+                    // TODO: decode data! and much more (like raise Shovel event, log etc)
+                    return data[uid].data;
+                })
+                .catch(error => {
+
+                    // TODO: log error, raise Shovel event etc..
+                    return Promise.reject(error);
+                });
+        };
+
+        // public stuff
+        // ============
+
+        this.getServiceInfo = () => ({ serviceHost, servicePort });
+
+        /**
+         * @param  {function} handlerFunction
+         * @return {FunctionHandler}
+         */
+        this.registerHandler = (handlerFunction) => {
+
+            // TODO: make hash out of handlerFunction (or have WeakMap where key is this function)
+            // to be able determine, if duplicities are going on
+            if (typeof handlerFunction != 'function') {
+                throw new TypeError(`Trying to register ${typeof handlerFunction} instead of function!`);
+            }
+
+            let handler = fn2Handlers.get(handlerFunction);
+
+            if (handler) {
+                return handler;
+            }
+
+            handler = new FunctionHandler(handlerFunction);
+            fnHandlers.set(handler.id, handler);
+            fn2Handlers.set(handlerFunction, handler);
+            return handler;
+        };
+
+        /**
+         * Returns handler or undefined
+         * @param  {string|function} handler - could be 'id' of handler as string
+         * or function (which was used for registering the handler)
+         * @return {?FunctionHandler}         [description]
+         */
+        this.getHandler = (handler) => {
+
+            return fnHandlers.get(handler) || fn2Handlers.get(handler);
+        };
+
+        /**
+         * [unregisterHandler description]
+         * @param  {function|string|FunctionHandler} handler
+         * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
+         */
+        this.unregisterHandler = (handler) => {
+
+            switch (typeof handler) {
+
+                case 'function':
+                    // TODO: !!!
+                    throw new Error('Not implemented yet!');
+                    break;
+
+                case 'string':
+                    // noop, already 'id' ..we hope!
+                    break;
+
+                case 'object':
+
+                    if (handler instanceof FunctionHandler) {
+                        handler = handler.id;
+                    } else {
+                        throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                    }
+                    break;
+
+                default:
+                    throw new TypeError(`Trying to unregister handler, using invalid handler identifier!`);
+                    break;
+            }
+
+            return fnHandlers.delete(handler);
+        };
+
+        this.initialize = () => {
+
+            foreverHook();
+            return this.list(true).then(() => this);
+        };
+
+        this.get = (uid) => {
+
+            return instances.get(uid);
+        };
+
+        this.list = (forceRequest = false) => {
+
+            if (forceRequest) {
+                let postData = { action: ACTIONS.list };
+
+                return boundRequest({ method: 'POST', path: url }, postData)
+                    .then(data => {
+
+                        let list = [];
+                        for (let typeHash in data) {
+                            let { descriptor, typeName, instances } = data[typeHash];
+                            let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
+
+                            instances.forEach(uid => {
+
+                                addInstance(uid, WrapperClass);
+                            });
+
+                            list.push({ typeName, instances });
+                        }
+
+                        return list;
+                    });
+            } else {
+                let types = new Map();
+                instances.forEach((instance, uid) => {
+
+                    let { typeName, typeHash } = instance[TYPE_KEY];
+                    let typeInfo = types.get(typeHash) || {
+                        typeName,
+                        instances: []
+                    };
+
+                    typeInfo.instances.push(uid);
+                    types.set(typeHash, typeInfo);
+
+                });
+
+                return Array.from(types.values());
+            }
+        };
     }
 
     static get Wrapper() {
