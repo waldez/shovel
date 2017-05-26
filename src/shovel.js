@@ -157,6 +157,8 @@ class Shovel {
         this.server.start();
     }
 
+    getServer() { return this.server.server; }
+
     stop(callback) {
 
         this.server.close(callback);
@@ -280,10 +282,13 @@ class Shovel {
             let session = this.getSessionData(sessionId);
             let resolveEncoded = data => resolve(this.jsone.encode(data));
 
+            // TODO:
+            // FIX:
+            // prosetrit! que?
             // why?!?
-            // if (session.foreverHook) {
-            //     session.foreverHook.reject({ aborted: 'true' });
-            // }
+            if (session.foreverHook) {
+                session.rejectForeverHook({ aborted: 'true' });
+            }
 
             session.setForeverHook(resolveEncoded, reject);
         });

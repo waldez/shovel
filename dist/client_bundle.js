@@ -75,8 +75,8 @@ var ShovelClient =
 
 const JSONE = __webpack_require__(2);
 
-// 30 seconds hook timeout
-const HOOK_TIMEOUT = 30 * 1000;
+// 25 seconds hook timeout
+const HOOK_TIMEOUT = 25 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 
@@ -115,6 +115,21 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
         reject(errorResponse);
     }
 };
+
+function getUid(as32BitNumber) {
+
+    const timePart = (new Date()).getTime();
+    const rand = Math.random();
+
+    if (as32BitNumber) {
+        const randomPart = (rand * MAX_UINT32) | 0;
+        return timePart ^ randomPart;
+    } else {
+        const randomPart = (rand * 1e9) | 0;
+        const modPart = randomPart % 15;
+        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
+    }
+}
 
 /**
  * Simple function handler class
@@ -167,21 +182,6 @@ let Wrapper = function(typeName, typeHash) {
         }
     });
 };
-
-function getUid(as32BitNumber) {
-
-    const timePart = (new Date()).getTime();
-    const rand = Math.random();
-
-    if (as32BitNumber) {
-        const randomPart = (rand * MAX_UINT32) | 0;
-        return timePart ^ randomPart;
-    } else {
-        const randomPart = (rand * 1e9) | 0;
-        const modPart = randomPart % 15;
-        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
-    }
-}
 
 function _w(instance) {
 
@@ -348,52 +348,72 @@ class ShovelClient {
             // clear the timer
             clearTimeout(hookTimer);
             hookTimer = null;
-            // if there is pending request, cancel it
-            if (hookPromise) {
-                hookPromise.abort()
-                    .then(foreverHook)
-                    .catch(foreverHook);
-            }
 
             // needed this direct promise, to be able call abort
             hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
             hookPromise
                 .then(data => {
 
-                    // fullfilled, so clear it
-                    hookPromise = null;
+                    if (hookPromise) {
+                        // fullfilled, so clear it
+                        hookPromise = null;
 
-                    if (Array.isArray(data)) {
-                        data.forEach(handlerData => {
+                        if (Array.isArray(data)) {
+                            data.forEach(handlerData => {
 
-                            let handler = this.getHandler(handlerData.id);
-                            // could return promise, which could be sent back to server...
-                            let result = Promise.resolve(handler.call(handlerData.data));
-                        });
-                    } else {
-                        // TODO: what? some kind of error..
+                                let handler = this.getHandler(handlerData.id);
+                                if (handler) {
+                                    // could return promise, which could be sent back to server...
+                                    let result = Promise.resolve(handler.call(handlerData.data));
+                                } else {
+                                    // NOOP - just ignore
+                                }
+                            });
+                        } else {
+                            // TODO: what? some kind of error..
+                        }
                     }
 
                     // keep the cycle alive
-                    foreverHook();
+                    nextTickForeverHook();
                 }, error => {
 
-                    if (hookPromise.aborted) {
+                    // just ignore!!! for now!
 
-                        foreverHook();
-                    } else {
+                    // TODO: nejak vodchytavat chybky... ted se znovu proste ty hooky nenahodi pri
+                    // vypadeku spojeni atd.. tj. neni nic v queue a node client skonci
 
-                        // TODO: better
-                        console.log('Forever hook error:', error);
-                    }
+                    // if (hookPromise && hookPromise.aborted) {
+                    //     nextTickForeverHook();
+                    // } else {
+                    //     console.log('Forever hook error:', error);
+                    //     // TODO: better
+                    // }
 
                     // fullfilled with error, so clear it
                     hookPromise = null;
                 });
 
             // set the timeout
-            hookTimer = setTimeout(foreverHook, HOOK_TIMEOUT);
+            hookTimer = setTimeout(abortForeverHook, HOOK_TIMEOUT);
         };
+
+        function abortForeverHook() {
+            // if there is pending request, cancel it
+            if (hookPromise) {
+                hookPromise.abort();
+                hookPromise = null;
+
+                // restart the loop
+                nextTickForeverHook();
+            }
+        }
+
+        // we don't want to bleed out of stack, do we?
+        function nextTickForeverHook() {
+
+            setTimeout(foreverHook, 0);
+        }
 
         /**
          * shovels the data to server, process response and returns appropriate response
@@ -663,7 +683,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     promise.abort = () => {
 
         promise.aborted = true;
-        req.abort.bind(req);
+        req.abort(req);
         return promise;
     };
 

@@ -35,7 +35,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     promise.abort = () => {
 
         promise.aborted = true;
-        req.abort.bind(req);
+        req.abort();
         return promise;
     };
 
