@@ -1,6 +1,6 @@
 'use strict'
 /**
- * @fileOverview SHOVEL: Shit Happens Online - Library
+ * @fileOverview SHOVEL: Shit Happens Online Via Epic Library
  * @author waldez
  * ▛▀▀▌▟█▖▛▀▀▌
  * ▌█▌▌▟▝▖▌█▌▌
@@ -43,12 +43,17 @@ function analyzeInstance(instance) {
     };
 }
 
-const PERSISTENCE_ENUM = [
-    'Server',           // lives 'till unregistered on server side
-    'Client',           // lives 'till unregistered on client side (or local storage cleaned)
-    'Session',          // lives 'till in session storage
-    'Temporary'         // lives 'till sent
-];
+const PERSISTENCE = Object.freeze({
+    Server: 0,           // lives 'till unregistered on server side
+    Client: 1,           // lives 'till unregistered on client side (or local storage cleaned)
+    Session: 2,          // lives 'till in session storage
+    Temporary: 3         // lives 'till sent
+});
+
+const SCOPE = Object.freeze({
+    GLOBAL: 0,
+    SESSION: 1
+});
 
 class FunctionHandler {
 
@@ -74,10 +79,10 @@ class Shovel {
         const jsonHandlers = {
             regInstances: {
                 name: 'Wrapper',
-                instanceOf: instance => this.instances.has(instance),
-                stringify: instance => {
+                instanceOf: (instance, session) => this.hasInstance(instance, session),
+                stringify: (instance, session) => {
 
-                    const wrapper = this.instances.get(instance);
+                    const wrapper = this.getInstance(instance, session);
                     const { typeHash, typeName } = Wrapper.getMeta(wrapper);
                     return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
                 }
@@ -85,14 +90,14 @@ class Shovel {
             Wrapper: {
                 name: 'Wrapper',
                 ctor: Wrapper,
-                stringify: wrapper => {
+                stringify: (wrapper, session) => {
 
                     const { typeHash, typeName } = Wrapper.getMeta(wrapper);
                     return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
                 },
                 parse: ({ uid, typeHash }, session) => {
 
-                    let wrapper = this.wrappers.get(uid);
+                    let wrapper = this.getWrapper(uid, session);
                     if (wrapper) {
                         return Wrapper.getInstance(wrapper);
                     }
@@ -104,8 +109,8 @@ class Shovel {
             },
             FunctionHandler: {
                 name: 'FunctionHandler',
-                stringify: instance => `{"id":"${instance.id}}"`,
-                parse: ({ id }, { session }) => {
+                stringify: (instance, session) => `{"id":"${instance.id}}"`,
+                parse: ({ id }, session) => {
 
                     let handler = session.getFnHandler(id);
                     if (!handler) {
@@ -124,6 +129,9 @@ class Shovel {
         this.sessionMap = sessionMap;
         this.jsone = new JSONE({ handlers: jsonHandlers });
         this.types = {}; // ??
+
+        // string:wrappers
+        this.globWrappers = new Map();
 
         // uuid:wrapper
         this.wrappers = new Map();
@@ -164,7 +172,57 @@ class Shovel {
         this.server.close(callback);
     }
 
-    register(instance, persistence) {
+    // helpers - TODO: make them private
+
+    hasInstance(instance, session) {
+
+        return (session && session.instances.has(instance)) || this.instances.has(instance);
+    }
+
+    getInstance(instance, session) {
+
+        return (session && session.instances.get(instance)) || this.instances.get(instance);
+    }
+
+    setInstance(instance, wrapper, session) {
+
+        return (session && session.instances.set(instance, wrapper)) || this.instances.set(instance, wrapper);
+    }
+
+    deleteInstance(instance, session) {
+
+        return (session && session.instances.delete(instance)) || this.instances.delete(instance);
+    }
+
+    getWrapper(uuid, session) {
+
+        return (session && session.wrappers.get(uuid)) || this.wrappers.get(uuid);
+    }
+
+    setWrapper(uuid, wrapper, session) {
+
+        return (session && session.wrappers.set(uuid, wrapper)) || this.wrappers.set(uuid, wrapper);
+    }
+
+    deleteWrapper(uuid, session) {
+
+        return (session && session.wrappers.delete(uuid)) || this.wrappers.delete(uuid);
+    }
+
+
+    /**
+     * Registers item to Shovel
+     * @param  {*} instance
+     * @param  {{
+     *         persistence: PERSISTENCE,
+     *         scope: SCOPE,
+     *         name: string
+     * }} options
+     * @return {Wrapper}
+     */
+    register(instance, options = {}) {
+
+        let { name, persistence, scope, session } = options;
 
         let {
             protoType,
@@ -173,20 +231,28 @@ class Shovel {
             uid
         } = analyzeInstance(instance);
 
-        let wrapper = this.instances.get(instance);
+        let wrapper = this.getInstance(instance, session);
         if (!wrapper) {
-            // let uid = farmhash.fingerprint32(uuidV1());
-            wrapper = new Wrapper(instance, { uid, proccessIherited: true });
 
+            wrapper = new Wrapper(instance, { uid, proccessIherited: true });
             Wrapper.setMeta(wrapper, {
                 typeHash: protoHash,
                 typeName,
                 // prototype of wrapped instances
-                protoType
+                protoType,
+                name
             });
 
-            this.instances.set(instance, wrapper);
-            this.wrappers.set(uid, wrapper);
+            // check, if we can name global instance
+            if (typeof name == 'string' && scope === SCOPE.GLOBAL) {
+                if (this.globWrappers.has(name)) {
+                    throw new Error(`Instance already registered with global name ${name}`);
+                }
+
+                this.globWrappers.set(name, wrapper);
+            }
+            this.setInstance(instance, wrapper, session);
+            this.setWrapper(uid, wrapper, session);
         }
 
         return wrapper;
@@ -197,7 +263,7 @@ class Shovel {
      * Let go of the wrapper
      * @param  {Wrapper|Object} obj
      */
-    unregister(obj) {
+    unregister(obj, session) {
 
         let instance = obj;
         let wrapper;
@@ -206,23 +272,29 @@ class Shovel {
             wrapper = obj;
             instance = wrapper[_instance];
         } else {
-            wrapper = instances.get(instance);
+            wrapper = this.getInstances(instance, session);
         }
 
         if (wrapper) {
-            this.instances.delete(instance);
-            this.wrappers.delete(Wrapper.getUID(wrapper));
+            let { name } = Wrapper.getMeta(wrapper);
+            this.globWrappers.delete(name);
+            this.deleteInstance(instance, session);
+            this.deleteWrapper(Wrapper.getUID(wrapper), session);
         }
     }
 
-    getWrapperByPath(path) {
+    getWrapperByPath(path, session) {
 
         // TODO: return wrapper based on path
         // paths could be:
         // 'MyClass', '13546132' <- in the first case, there is only one instance of that class, so it will
         // return this instance wrapper, in the second case, it's hash to an actual wrapper
-        let uid = path;
-        return this.wrappers.get(uid);
+        return typeof path == 'number' ? this.getWrapper(path, session) : this.globWrappers.get(path);
+    }
+
+    buildMetadata(session, known) {
+
+
     }
 
     listRegistered() {
@@ -230,7 +302,7 @@ class Shovel {
         let result = {};
         this.wrappers.forEach((wrapper, uid) => {
 
-            let { typeHash, typeName } = Wrapper.getMeta(wrapper);
+            let { typeHash, typeName, name, scope } = Wrapper.getMeta(wrapper);
 
             let wrapperClass = result[typeHash] || {
                 typeName,
@@ -245,7 +317,7 @@ class Shovel {
         return result;
     }
 
-    buildResult(path, data) {
+    buildResult(path, session, data) {
 
         // TODO: wrapper(shovel) requests return array!!
         // [0] - will contain needed WrapperClasses (in future only those, who has been missing on client)
@@ -257,10 +329,10 @@ class Shovel {
         return this.jsone.encode([
             { metadata: 'comming soon!' },
             { [path]: { data } }
-            ]);
+            ], session);
     }
 
-    getSessionData(sessionId) {
+    getSessionData(sessionId = null) {
         let session = this.sessionMap.get(sessionId);
 
         if (!session) {
@@ -297,9 +369,9 @@ class Shovel {
     processRequest(requestData, request) {
 
         const sessionId = request.headers['x-shovel-session'];
-        requestData = this.jsone.decode(requestData, {
-            session: this.getSessionData(sessionId)
-        });
+        const session = this.getSessionData(sessionId);
+
+        requestData = this.jsone.decode(requestData, session);
 
         let { action, path = 0, field, data } = requestData;
 
@@ -313,8 +385,7 @@ class Shovel {
         }
 
         // wrapper dependent requests
-        let wrapper = this.getWrapperByPath(path);
-
+        let wrapper = this.getWrapperByPath(path, session);
         if (!wrapper) {
             return Promise.reject(`No wrapper at path '${path}'!`);
         }
@@ -327,7 +398,7 @@ class Shovel {
         // TODO: refactor to function map
         if (action == 'get') {
             try {
-                return Promise.resolve(this.buildResult(path, wrapper[field]));
+                return Promise.resolve(this.buildResult(path, session, wrapper[field]));
             } catch (error) {
                 return Promise.reject(error);
             }
@@ -335,7 +406,7 @@ class Shovel {
 
         if (action == 'set') {
             try {
-                return Promise.resolve(this.buildResult(path, wrapper[field] = data));
+                return Promise.resolve(this.buildResult(path, session, wrapper[field] = data));
             } catch (error) {
                 return Promise.reject(error);
             }
@@ -349,7 +420,7 @@ class Shovel {
 
             try {
                 return wrapper[field].apply(wrapper, data)
-                    .then(this.buildResult.bind(this, path));
+                    .then(this.buildResult.bind(this, path, session));
             } catch (error) {
                 return Promise.reject(error);
             }

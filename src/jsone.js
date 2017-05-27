@@ -49,7 +49,7 @@ function getTypeFromName(name, dataTypes = DATA_TYPES) {
     return dataTypes[name];
 }
 
-function getType(value, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
+function getType(value, userData, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
 
     const jstype = typeof value;
 
@@ -66,27 +66,27 @@ function getType(value, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
         }
 
         // return found or unknown generic object
-        return inheritables.find(item => (item.instanceOf && item.instanceOf(value)) || (item.ctor && value instanceof item.ctor))
+        return inheritables.find(item => (item.instanceOf && item.instanceOf(value, userData)) || (item.ctor && value instanceof item.ctor))
             || dataTypes.Object;
     } else {
         return dataTypes[Object.getPrototypeOf(value).constructor.name];
     }
 }
 
-function arrayStringify(array) {
+function arrayStringify(array, userData) {
 
     let delimiter = '';
     let body = '';
     for (let i = 0; i < array.length; i++) {
         const value = array[i];
-        body += delimiter + stringify.call(this, value);
+        body += delimiter + stringify.call(this, value, userData);
         delimiter = ',';
     }
 
     return `[${body}]`;
 }
 
-function objectStringify(object) {
+function objectStringify(object, userData) {
 
     let delimiter = '';
     let body = '';
@@ -96,7 +96,7 @@ function objectStringify(object) {
             if (typeof value == 'undefined') {
                 continue;
             }
-            body += delimiter + JSON.stringify(key) + ':' + stringify.call(this, value);
+            body += delimiter + JSON.stringify(key) + ':' + stringify.call(this, value, userData);
             delimiter = ',';
         }
     }
@@ -109,16 +109,16 @@ function decode(jsonString, userData) {
     return parse.call(this, jsonString, userData);
 };
 
-function encode(json) {
+function encode(json, userData) {
 
-    return stringify.call(this, json);
+    return stringify.call(this, json, userData);
 };
 
-function stringify(value) {
+function stringify(value, userData) {
 
-    const type = getType(value, this.handlers, this.inheritables);
+    const type = getType(value, userData, this.handlers, this.inheritables);
     if (type.stringify) {
-        return type.stringify.call(this, value);
+        return type.stringify.call(this, value, userData);
     } else {
         return JSON.stringify(value);
     }
@@ -146,7 +146,7 @@ const JSONE = function({ handlers }) {
             let handler = handlers[key];
             if (typeof handler.stringify == 'function') {
                 let enhancedStringify = handler.stringify.bind(handler);
-                handler.stringify = instance => stringifyExtended(handler.name, enhancedStringify(instance));
+                handler.stringify = (instance, userData) => stringifyExtended(handler.name, enhancedStringify(instance, userData));
             }
         }
     }

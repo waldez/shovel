@@ -6,12 +6,12 @@ const HOOK_TIMEOUT = 25 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 
-const ACTIONS = {
+const ACTIONS = Object.freeze({
     list: 'list',
     call: 'call',
     get: 'get',
     set: 'set'
-};
+});
 
 const url = '/';
 
@@ -416,7 +416,6 @@ class ShovelClient {
         };
 
         /**
-         * [unregisterHandler description]
          * @param  {function|string|FunctionHandler} handler
          * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
          */

@@ -9,6 +9,11 @@ class Session {
         this.outbox = [];
         this.scheduledOutboxFlush = false;
 
+        // uuid:wrapper
+        this.wrappers = new Map();
+        // key: registered instance, value: { Wrapper, type }
+        this.instances = new WeakMap();
+
         Object.defineProperties(this, {
             id: {
                 get: () => sessionId
