@@ -116,19 +116,12 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
     }
 };
 
-function getUid(as32BitNumber) {
+function getUid() {
 
     const timePart = (new Date()).getTime();
-    const rand = Math.random();
-
-    if (as32BitNumber) {
-        const randomPart = (rand * MAX_UINT32) | 0;
-        return timePart ^ randomPart;
-    } else {
-        const randomPart = (rand * 1e9) | 0;
-        const modPart = randomPart % 15;
-        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
-    }
+    const randomPart = (Math.random() * 1e9) | 0;
+    const modPart = randomPart % 15;
+    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
 }
 
 /**
@@ -250,6 +243,9 @@ class ShovelClient {
         // id:[FunctionHandler]
         const fnHandlers = new Map();
         const fn2Handlers = new WeakMap();
+        // data id & global data uuid
+        let dataUuid = 0;
+        let globalDataUuid = 0;
 
         // handlers for unknown types (Wrapper type)
         const jsonHandlers = {
@@ -414,10 +410,36 @@ class ShovelClient {
         function buildMetadata() {
 
             return {
-                instances: [],
-                wrapperClasses: [],
-                handlers: []
+                dataUuid,
+                globalDataUuid
             };
+        }
+
+        function processMetadata(data, generateList) {
+
+            const list = generateList ? [] : null;
+            // do we have latest metadata?
+            if (data.dataUuid != dataUuid || data.globalDataUuid != globalDataUuid) {
+
+                // nope, process them
+                for (let typeHash in data.metadata) {
+                    let { descriptor, typeName, instances } = data.metadata[typeHash];
+                    let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
+
+                    instances.forEach(uid => {
+
+                        addInstance(uid, WrapperClass);
+                    });
+
+                    if (generateList) {
+                        list.push({ typeName, instances });
+                    }
+                }
+
+                // update data uuids
+                dataUuid = data.dataUuid;
+                globalDataUuid = data.globalDataUuid;
+            }
         }
 
         /**
@@ -447,6 +469,7 @@ class ShovelClient {
             return boundRequest({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
                 .then(([metadata, data]) => {
 
+                    processMetadata(metadata);
                     // TODO: decode data! and much more (like raise Shovel event, log etc)
                     return data[uid].data;
                 })
@@ -551,23 +574,7 @@ class ShovelClient {
                 ];
 
                 return boundRequest({ method: 'POST', path: url }, postData)
-                    .then(data => {
-
-                        let list = [];
-                        for (let typeHash in data) {
-                            let { descriptor, typeName, instances } = data[typeHash];
-                            let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
-
-                            instances.forEach(uid => {
-
-                                addInstance(uid, WrapperClass);
-                            });
-
-                            list.push({ typeName, instances });
-                        }
-
-                        return list;
-                    });
+                    .then(([metadata, data]) => processMetadata(metadata, true));
             } else {
                 let types = new Map();
                 instances.forEach((instance, uid) => {

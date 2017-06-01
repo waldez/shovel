@@ -416,9 +416,6 @@ class Shovel {
             session
         } = this.processRawData(rawData, request);
 
-        console.log('!W! - session.id:', session.id);
-        console.log('!W! - metadata:', metadata);
-
         let { action, path = 0, field, data } = requestData;
 
         if (!action) { // in future, in this case, we want to send some info data, or whatever
