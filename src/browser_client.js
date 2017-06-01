@@ -28,25 +28,6 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         data = typeof data === 'object' ? JSON.stringify(data) : data;
         req = new XMLHttpRequest();
 
-
-        // TODO: ?? inspiration
-        // var xhr = new XMLHttpRequest();
-        // console.log('UNSENT', xhr.status);
-
-        // xhr.open('GET', '/server', true);
-        // console.log('OPENED', xhr.status);
-
-        // xhr.onprogress = function () {
-        //   console.log('LOADING', xhr.status);
-        // };
-
-        // xhr.onload = function () {
-        //   console.log('DONE', xhr.status);
-        // };
-
-        // xhr.send(null);
-
-
         req.error = (error) => {
 
             reject({
@@ -78,7 +59,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     promise.abort = () => {
 
         promise.aborted = true;
-        req.abort(req);
+        req.abort();
         return promise;
     };
 

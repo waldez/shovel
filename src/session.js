@@ -1,5 +1,7 @@
 'use strict'
 
+const ScopeContainer = require('./scope_container');
+
 class Session {
 
     constructor(sessionId) {
@@ -8,15 +10,14 @@ class Session {
         this.functionHandlers = new Map();
         this.outbox = [];
         this.scheduledOutboxFlush = false;
-
-        // uuid:wrapper
-        this.wrappers = new Map();
-        // key: registered instance, value: { Wrapper, type }
-        this.instances = new WeakMap();
+        const data = new ScopeContainer();
 
         Object.defineProperties(this, {
             id: {
                 get: () => sessionId
+            },
+            data: {
+                get: () => data
             }
         });
     }

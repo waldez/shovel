@@ -80,12 +80,12 @@ const HOOK_TIMEOUT = 25 * 1000;
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 
-const ACTIONS = {
+const ACTIONS = Object.freeze({
     list: 'list',
     call: 'call',
     get: 'get',
     set: 'set'
-};
+});
 
 const url = '/';
 
@@ -350,7 +350,7 @@ class ShovelClient {
             hookTimer = null;
 
             // needed this direct promise, to be able call abort
-            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
+            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, [buildMetadata()]);
             hookPromise
                 .then(data => {
 
@@ -378,17 +378,11 @@ class ShovelClient {
                     nextTickForeverHook();
                 }, error => {
 
-                    // just ignore!!! for now!
-
-                    // TODO: nejak vodchytavat chybky... ted se znovu proste ty hooky nenahodi pri
-                    // vypadeku spojeni atd.. tj. neni nic v queue a node client skonci
-
-                    // if (hookPromise && hookPromise.aborted) {
-                    //     nextTickForeverHook();
-                    // } else {
-                    //     console.log('Forever hook error:', error);
-                    //     // TODO: better
-                    // }
+                    if (error.code === 'ECONNRESET' || error.response === '"aborted"' ) {
+                        // NOOP - this is expected
+                    } else {
+                        console.log('Error occured on forever hook:\n', error);
+                    }
 
                     // fullfilled with error, so clear it
                     hookPromise = null;
@@ -399,20 +393,31 @@ class ShovelClient {
         };
 
         function abortForeverHook() {
+
+            hookTimer = null;
             // if there is pending request, cancel it
             if (hookPromise) {
                 hookPromise.abort();
                 hookPromise = null;
 
-                // restart the loop
-                nextTickForeverHook();
             }
+            // restart the loop
+            nextTickForeverHook();
         }
 
         // we don't want to bleed out of stack, do we?
         function nextTickForeverHook() {
 
             setTimeout(foreverHook, 0);
+        }
+
+        function buildMetadata() {
+
+            return {
+                instances: [],
+                wrapperClasses: [],
+                handlers: []
+            };
         }
 
         /**
@@ -428,13 +433,16 @@ class ShovelClient {
             // TODO: encode args(data) to store types etc..
             const bodyParser = jsone.decode.bind(jsone);
 
-            let postData = {
-                action,
-                path: uid,
-                field: name,
-                data: args
-                // TODO: in the future, generate UUID for the request
-            };
+            let postData = [
+                buildMetadata(),
+                {
+                    action,
+                    path: uid,
+                    field: name,
+                    data: args
+                    // TODO: in the future, generate UUID for the request
+                }
+            ];
 
             return boundRequest({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
                 .then(([metadata, data]) => {
@@ -490,7 +498,6 @@ class ShovelClient {
         };
 
         /**
-         * [unregisterHandler description]
          * @param  {function|string|FunctionHandler} handler
          * @return {boolean} returns true, if handler was unregitered. false, if there was nothing to unregister
          */
@@ -538,7 +545,10 @@ class ShovelClient {
         this.list = (forceRequest = false) => {
 
             if (forceRequest) {
-                let postData = { action: ACTIONS.list };
+                let postData = [
+                    buildMetadata(),
+                    { action: ACTIONS.list }
+                ];
 
                 return boundRequest({ method: 'POST', path: url }, postData)
                     .then(data => {
@@ -633,25 +643,6 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         data = typeof data === 'object' ? JSON.stringify(data) : data;
         req = new XMLHttpRequest();
 
-
-        // TODO: ?? inspiration
-        // var xhr = new XMLHttpRequest();
-        // console.log('UNSENT', xhr.status);
-
-        // xhr.open('GET', '/server', true);
-        // console.log('OPENED', xhr.status);
-
-        // xhr.onprogress = function () {
-        //   console.log('LOADING', xhr.status);
-        // };
-
-        // xhr.onload = function () {
-        //   console.log('DONE', xhr.status);
-        // };
-
-        // xhr.send(null);
-
-
         req.error = (error) => {
 
             reject({
@@ -683,7 +674,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
     promise.abort = () => {
 
         promise.aborted = true;
-        req.abort(req);
+        req.abort();
         return promise;
     };
 
@@ -752,7 +743,7 @@ function getTypeFromName(name, dataTypes = DATA_TYPES) {
     return dataTypes[name];
 }
 
-function getType(value, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
+function getType(value, userData, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
 
     const jstype = typeof value;
 
@@ -769,27 +760,27 @@ function getType(value, dataTypes = DATA_TYPES, inheritables = INHERITABLES) {
         }
 
         // return found or unknown generic object
-        return inheritables.find(item => (item.instanceOf && item.instanceOf(value)) || (item.ctor && value instanceof item.ctor))
+        return inheritables.find(item => (item.instanceOf && item.instanceOf(value, userData)) || (item.ctor && value instanceof item.ctor))
             || dataTypes.Object;
     } else {
         return dataTypes[Object.getPrototypeOf(value).constructor.name];
     }
 }
 
-function arrayStringify(array) {
+function arrayStringify(array, userData) {
 
     let delimiter = '';
     let body = '';
     for (let i = 0; i < array.length; i++) {
         const value = array[i];
-        body += delimiter + stringify.call(this, value);
+        body += delimiter + stringify.call(this, value, userData);
         delimiter = ',';
     }
 
     return `[${body}]`;
 }
 
-function objectStringify(object) {
+function objectStringify(object, userData) {
 
     let delimiter = '';
     let body = '';
@@ -799,7 +790,7 @@ function objectStringify(object) {
             if (typeof value == 'undefined') {
                 continue;
             }
-            body += delimiter + JSON.stringify(key) + ':' + stringify.call(this, value);
+            body += delimiter + JSON.stringify(key) + ':' + stringify.call(this, value, userData);
             delimiter = ',';
         }
     }
@@ -812,16 +803,16 @@ function decode(jsonString, userData) {
     return parse.call(this, jsonString, userData);
 };
 
-function encode(json) {
+function encode(json, userData) {
 
-    return stringify.call(this, json);
+    return stringify.call(this, json, userData);
 };
 
-function stringify(value) {
+function stringify(value, userData) {
 
-    const type = getType(value, this.handlers, this.inheritables);
+    const type = getType(value, userData, this.handlers, this.inheritables);
     if (type.stringify) {
-        return type.stringify.call(this, value);
+        return type.stringify.call(this, value, userData);
     } else {
         return JSON.stringify(value);
     }
@@ -849,7 +840,7 @@ const JSONE = function({ handlers }) {
             let handler = handlers[key];
             if (typeof handler.stringify == 'function') {
                 let enhancedStringify = handler.stringify.bind(handler);
-                handler.stringify = instance => stringifyExtended(handler.name, enhancedStringify(instance));
+                handler.stringify = (instance, userData) => stringifyExtended(handler.name, enhancedStringify(instance, userData));
             }
         }
     }

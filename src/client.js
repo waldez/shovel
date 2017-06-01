@@ -42,19 +42,12 @@ let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyPar
     }
 };
 
-function getUid(as32BitNumber) {
+function getUid() {
 
     const timePart = (new Date()).getTime();
-    const rand = Math.random();
-
-    if (as32BitNumber) {
-        const randomPart = (rand * MAX_UINT32) | 0;
-        return timePart ^ randomPart;
-    } else {
-        const randomPart = (rand * 1e9) | 0;
-        const modPart = randomPart % 15;
-        return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
-    }
+    const randomPart = (Math.random() * 1e9) | 0;
+    const modPart = randomPart % 15;
+    return timePart.toString(16) + randomPart.toString(16) + modPart.toString(16);
 }
 
 /**
@@ -176,6 +169,9 @@ class ShovelClient {
         // id:[FunctionHandler]
         const fnHandlers = new Map();
         const fn2Handlers = new WeakMap();
+        // data id & global data uuid
+        let dataUuid = 0;
+        let globalDataUuid = 0;
 
         // handlers for unknown types (Wrapper type)
         const jsonHandlers = {
@@ -276,7 +272,7 @@ class ShovelClient {
             hookTimer = null;
 
             // needed this direct promise, to be able call abort
-            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, {});
+            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, [buildMetadata()]);
             hookPromise
                 .then(data => {
 
@@ -304,17 +300,11 @@ class ShovelClient {
                     nextTickForeverHook();
                 }, error => {
 
-                    // just ignore!!! for now!
-
-                    // TODO: nejak vodchytavat chybky... ted se znovu proste ty hooky nenahodi pri
-                    // vypadeku spojeni atd.. tj. neni nic v queue a node client skonci
-
-                    // if (hookPromise && hookPromise.aborted) {
-                    //     nextTickForeverHook();
-                    // } else {
-                    //     console.log('Forever hook error:', error);
-                    //     // TODO: better
-                    // }
+                    if (error.code === 'ECONNRESET' || error.response === '"aborted"' ) {
+                        // NOOP - this is expected
+                    } else {
+                        console.log('Error occured on forever hook:\n', error);
+                    }
 
                     // fullfilled with error, so clear it
                     hookPromise = null;
@@ -325,20 +315,57 @@ class ShovelClient {
         };
 
         function abortForeverHook() {
+
+            hookTimer = null;
             // if there is pending request, cancel it
             if (hookPromise) {
                 hookPromise.abort();
                 hookPromise = null;
 
-                // restart the loop
-                nextTickForeverHook();
             }
+            // restart the loop
+            nextTickForeverHook();
         }
 
         // we don't want to bleed out of stack, do we?
         function nextTickForeverHook() {
 
             setTimeout(foreverHook, 0);
+        }
+
+        function buildMetadata() {
+
+            return {
+                dataUuid,
+                globalDataUuid
+            };
+        }
+
+        function processMetadata(data, generateList) {
+
+            const list = generateList ? [] : null;
+            // do we have latest metadata?
+            if (data.dataUuid != dataUuid || data.globalDataUuid != globalDataUuid) {
+
+                // nope, process them
+                for (let typeHash in data.metadata) {
+                    let { descriptor, typeName, instances } = data.metadata[typeHash];
+                    let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
+
+                    instances.forEach(uid => {
+
+                        addInstance(uid, WrapperClass);
+                    });
+
+                    if (generateList) {
+                        list.push({ typeName, instances });
+                    }
+                }
+
+                // update data uuids
+                dataUuid = data.dataUuid;
+                globalDataUuid = data.globalDataUuid;
+            }
         }
 
         /**
@@ -354,17 +381,21 @@ class ShovelClient {
             // TODO: encode args(data) to store types etc..
             const bodyParser = jsone.decode.bind(jsone);
 
-            let postData = {
-                action,
-                path: uid,
-                field: name,
-                data: args
-                // TODO: in the future, generate UUID for the request
-            };
+            let postData = [
+                buildMetadata(),
+                {
+                    action,
+                    path: uid,
+                    field: name,
+                    data: args
+                    // TODO: in the future, generate UUID for the request
+                }
+            ];
 
             return boundRequest({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
                 .then(([metadata, data]) => {
 
+                    processMetadata(metadata);
                     // TODO: decode data! and much more (like raise Shovel event, log etc)
                     return data[uid].data;
                 })
@@ -463,26 +494,13 @@ class ShovelClient {
         this.list = (forceRequest = false) => {
 
             if (forceRequest) {
-                let postData = { action: ACTIONS.list };
+                let postData = [
+                    buildMetadata(),
+                    { action: ACTIONS.list }
+                ];
 
                 return boundRequest({ method: 'POST', path: url }, postData)
-                    .then(data => {
-
-                        let list = [];
-                        for (let typeHash in data) {
-                            let { descriptor, typeName, instances } = data[typeHash];
-                            let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
-
-                            instances.forEach(uid => {
-
-                                addInstance(uid, WrapperClass);
-                            });
-
-                            list.push({ typeName, instances });
-                        }
-
-                        return list;
-                    });
+                    .then(([metadata, data]) => processMetadata(metadata, true));
             } else {
                 let types = new Map();
                 instances.forEach((instance, uid) => {

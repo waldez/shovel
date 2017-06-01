@@ -24,10 +24,23 @@ const farmhash = require('farmhash');
 const Promise = require('bluebird');
 const Server = require('./server');
 const Wrapper = require('./wrapper');
+const ScopeContainer = require('./scope_container');
 const Session = require('./session');
 const JSONE = require('./jsone');
 
 const DEFAULT_PORT = 31415;
+
+const PERSISTENCE = Object.freeze({
+    Server: 0,           // lives 'till unregistered on server side
+    Client: 1,           // lives 'till unregistered on client side (or local storage cleaned)
+    Session: 2,          // lives 'till in session storage
+    Temporary: 3         // lives 'till sent
+});
+
+const SCOPE = Object.freeze({
+    GLOBAL: 0,
+    SESSION: 1
+});
 
 function analyzeInstance(instance) {
 
@@ -43,17 +56,35 @@ function analyzeInstance(instance) {
     };
 }
 
-const PERSISTENCE = Object.freeze({
-    Server: 0,           // lives 'till unregistered on server side
-    Client: 1,           // lives 'till unregistered on client side (or local storage cleaned)
-    Session: 2,          // lives 'till in session storage
-    Temporary: 3         // lives 'till sent
-});
+function* joinWrappersScopes(global, session) {
 
-const SCOPE = Object.freeze({
-    GLOBAL: 0,
-    SESSION: 1
-});
+    yield* global.wrappers.entries();
+
+    if (session) {
+        yield* session.data.wrappers.entries();
+    }
+}
+
+function mapToJson(map) {
+
+    // const json = Object.create(null);
+    const json = {};
+    for (const [key, value] of map.entries()) {
+        json[key] = value;
+    }
+    return json;
+}
+
+function jsonToMap(json) {
+
+    const map = new Map();
+    for (const key in json) {
+        if (!json.hasOwnProperty || json.hasOwnProperty(key)) {
+            map.set(key, json[key]);
+        }
+    }
+    return map;
+}
 
 class FunctionHandler {
 
@@ -121,7 +152,6 @@ class Shovel {
                     return handler.callback;
                 }
             }
-
         };
 
         const sessionMap = new Map();
@@ -130,14 +160,11 @@ class Shovel {
         this.jsone = new JSONE({ handlers: jsonHandlers });
         this.types = {}; // ??
 
-        // string:wrappers
+        // string:uuid
         this.globWrappers = new Map();
 
-        // uuid:wrapper
-        this.wrappers = new Map();
-
-        // key: registered instance, value: { Wrapper, type }
-        this.instances = new WeakMap();
+        // global scope containing wrappers and instances
+        this.globalData = new ScopeContainer();
 
         this.port = port;
         this.server = new Server(port, {
@@ -158,10 +185,11 @@ class Shovel {
             if (request.url == '/foreverhook') {
                 const sessionId = request.headers['x-shovel-session'];
                 let session = this.getSessionData(sessionId);
-                session.rejectForeverHook({ aborted: 'true' });
+                session.rejectForeverHook('aborted');
             }
         });
 
+        // start the fun!
         this.server.start();
     }
 
@@ -176,39 +204,33 @@ class Shovel {
 
     hasInstance(instance, session) {
 
-        return (session && session.instances.has(instance)) || this.instances.has(instance);
+        return session && session.data.hasInstance(instance) || this.globalData.hasInstance(instance);
     }
 
     getInstance(instance, session) {
 
-        return (session && session.instances.get(instance)) || this.instances.get(instance);
-    }
-
-    setInstance(instance, wrapper, session) {
-
-        return (session && session.instances.set(instance, wrapper)) || this.instances.set(instance, wrapper);
-    }
-
-    deleteInstance(instance, session) {
-
-        return (session && session.instances.delete(instance)) || this.instances.delete(instance);
+        return session && session.data.getInstance(instance) || this.globalData.getInstance(instance);
     }
 
     getWrapper(uuid, session) {
 
-        return (session && session.wrappers.get(uuid)) || this.wrappers.get(uuid);
+        return session && session.data.getWrapper(uuid) || this.globalData.getWrapper(uuid);
     }
 
-    setWrapper(uuid, wrapper, session) {
+    setInstanceAndWrapper(uuid, instance, wrapper, session) {
 
-        return (session && session.wrappers.set(uuid, wrapper)) || this.wrappers.set(uuid, wrapper);
+        (session && session.data || this.globalData).setInstanceAndWrapper(uuid, instance, wrapper);
     }
 
-    deleteWrapper(uuid, session) {
+    deleteInstanceAndWrapper(uuid, instance, session) {
 
-        return (session && session.wrappers.delete(uuid)) || this.wrappers.delete(uuid);
+        (session && session.data || this.globalData).deleteInstanceAndWrapper(uuid, instance);
     }
 
+    dataUuidsEqual(globalDataUuid, dataUuid, session) {
+
+        return (session && session.data.uuid == dataUuid || !session) && this.globalData.uuid == globalDataUuid;
+    }
 
     /**
      * Registers item to Shovel
@@ -222,9 +244,9 @@ class Shovel {
      */
     register(instance, options = {}) {
 
-        let { name, persistence, scope, session } = options;
-
-        let {
+        const { name, persistence, /*scope,*/ session } = options;
+        const scope = session ? SCOPE.SESSION : SCOPE.GLOBAL;
+        const {
             protoType,
             protoHash,
             typeName,
@@ -249,10 +271,10 @@ class Shovel {
                     throw new Error(`Instance already registered with global name ${name}`);
                 }
 
-                this.globWrappers.set(name, wrapper);
+                this.globWrappers.set(name, uid);
             }
-            this.setInstance(instance, wrapper, session);
-            this.setWrapper(uid, wrapper, session);
+
+            this.setInstanceAndWrapper(uid, instance, wrapper, session);
         }
 
         return wrapper;
@@ -278,31 +300,36 @@ class Shovel {
         if (wrapper) {
             let { name } = Wrapper.getMeta(wrapper);
             this.globWrappers.delete(name);
-            this.deleteInstance(instance, session);
-            this.deleteWrapper(Wrapper.getUID(wrapper), session);
+            this.deleteInstanceAndWrapper(Wrapper.getUID(wrapper), instance, session);
         }
     }
 
     getWrapperByPath(path, session) {
 
-        // TODO: return wrapper based on path
-        // paths could be:
-        // 'MyClass', '13546132' <- in the first case, there is only one instance of that class, so it will
-        // return this instance wrapper, in the second case, it's hash to an actual wrapper
-        return typeof path == 'number' ? this.getWrapper(path, session) : this.globWrappers.get(path);
+        const uid = typeof path == 'number' ? path : this.globWrappers.get(path);
+        return this.getWrapper(uid, session);
     }
 
-    buildMetadata(session, known) {
+    buildMetadata(session, generateNew) {
 
-
+        return {
+            dataUuid: session.data.uuid,
+            globalDataUuid: this.globalData.uuid,
+            globals: generateNew ? mapToJson(this.globWrappers) : {},
+            metadata: generateNew ? this.listRegistered(session) : {}
+        };
     }
 
-    listRegistered() {
+    listRegistered(session) {
 
         let result = {};
-        this.wrappers.forEach((wrapper, uid) => {
-
-            let { typeHash, typeName, name, scope } = Wrapper.getMeta(wrapper);
+        for (let [uid, wrapper] of joinWrappersScopes(this.globalData, session)) {
+            let {
+                /*name,
+                scope,*/
+                typeHash,
+                typeName
+            } = Wrapper.getMeta(wrapper);
 
             let wrapperClass = result[typeHash] || {
                 typeName,
@@ -312,25 +339,39 @@ class Shovel {
 
             wrapperClass.instances.push(uid);
             result[typeHash] = wrapperClass;
-        });
+        }
 
         return result;
     }
 
-    buildResult(path, session, data) {
+    buildResult(path, session, clientMetadata, data) {
 
-        // TODO: wrapper(shovel) requests return array!!
-        // [0] - will contain needed WrapperClasses (in future only those, who has been missing on client)
-        // [1] - actual result
-        // it's because of order of parsing at client
-        // FIX this!
+        // first of all, encode data, during encoding could be new (in session scope)
+        // wrappers been registered, so, after that, we compare data uuids, so we will know
+        // if client needs new metadata to be generadted
+        const encodedData = this.jsone.encode({ [path]: { data } }, session);
+        // now create metadata
+        const encodedMetadata = this.buildMetadata(session, !this.dataUuidsEqual(
+            clientMetadata.globalDataUuid,
+            clientMetadata.dataUuid,
+            session));
 
-        // encode data to the extended JSON
-        return this.jsone.encode([
-            { metadata: 'comming soon!' },
-            { [path]: { data } }
-            ], session);
+        // stick them together as JSON string (two item array [metadata, data])
+        return '[' + JSON.stringify(encodedMetadata) + ',' + encodedData + ']';
     }
+
+    processRawData(rawData, request) {
+
+        const session = this.getSessionData(request.headers['x-shovel-session']);
+        const [metadata = {}, requestData = {}] = this.jsone.decode(rawData, session);
+
+        return {
+            metadata,
+            requestData,
+            session
+        };
+    };
+
 
     getSessionData(sessionId = null) {
         let session = this.sessionMap.get(sessionId);
@@ -343,35 +384,40 @@ class Shovel {
         return session;
     }
 
-    processForeverHook(requestData, request) {
+    processForeverHook(rawData, request) {
 
-        const sessionId = request.headers['x-shovel-session'];
-        // do not need - for now!
-        // requestData = this.jsone.decode(requestData);
+        let {
+            metadata,
+            requestData,
+            session
+        } = this.processRawData(rawData, request);
 
         return new Promise((resolve, reject) => {
 
-            let session = this.getSessionData(sessionId);
-            let resolveEncoded = data => resolve(this.jsone.encode(data));
+            let resolveEncoded = data => resolve(this.jsone.encode(data, session));
 
             // TODO:
             // FIX:
             // prosetrit! que?
             // why?!?
             if (session.foreverHook) {
-                session.rejectForeverHook({ aborted: 'true' });
+                session.rejectForeverHook('aborted');
             }
 
             session.setForeverHook(resolveEncoded, reject);
         });
     }
 
-    processRequest(requestData, request) {
+    processRequest(rawData, request) {
 
-        const sessionId = request.headers['x-shovel-session'];
-        const session = this.getSessionData(sessionId);
+        let {
+            metadata,
+            requestData,
+            session
+        } = this.processRawData(rawData, request);
 
-        requestData = this.jsone.decode(requestData, session);
+        console.log('!W! - session.id:', session.id);
+        console.log('!W! - metadata:', metadata);
 
         let { action, path = 0, field, data } = requestData;
 
@@ -381,7 +427,8 @@ class Shovel {
 
         // wrapper independent requests
         if (action == 'list') {
-            return Promise.resolve(this.listRegistered());
+            return Promise.resolve(this.buildResult('Ξ', session, metadata, null));
+            // return Promise.resolve(this.listRegistered());
         }
 
         // wrapper dependent requests
@@ -398,7 +445,7 @@ class Shovel {
         // TODO: refactor to function map
         if (action == 'get') {
             try {
-                return Promise.resolve(this.buildResult(path, session, wrapper[field]));
+                return Promise.resolve(this.buildResult(path, session, metadata, wrapper[field]));
             } catch (error) {
                 return Promise.reject(error);
             }
@@ -406,7 +453,7 @@ class Shovel {
 
         if (action == 'set') {
             try {
-                return Promise.resolve(this.buildResult(path, session, wrapper[field] = data));
+                return Promise.resolve(this.buildResult(path, session, metadata, wrapper[field] = data));
             } catch (error) {
                 return Promise.reject(error);
             }
@@ -420,7 +467,7 @@ class Shovel {
 
             try {
                 return wrapper[field].apply(wrapper, data)
-                    .then(this.buildResult.bind(this, path, session));
+                    .then(this.buildResult.bind(this, path, session, metadata));
             } catch (error) {
                 return Promise.reject(error);
             }
@@ -435,5 +482,7 @@ class Shovel {
 
 module.exports = {
     Shovel,
-    ShovelClient: require('./node_client')
+    ShovelClient: require('./node_client'),
+    SCOPE,
+    PERSISTENCE
 };
