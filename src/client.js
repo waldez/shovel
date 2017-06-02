@@ -162,6 +162,8 @@ class ShovelClient {
     constructor({ serviceHost = 'localhost', servicePort = '31415', request, getSessionId }) {
 
         const boundShovel = shovel.bind(this);
+        // name:uid
+        const globalNames = new Map();
         // typeHash:[WrapperClass].constructor
         const wrappers = new Map();
         // uid:[WrapperClass]
@@ -344,10 +346,10 @@ class ShovelClient {
         function processMetadata(data, generateList) {
 
             const list = generateList ? [] : null;
-            // do we have latest metadata?
+            // do we have latest metadata? ..
             if (data.dataUuid != dataUuid || data.globalDataUuid != globalDataUuid) {
 
-                // nope, process them
+                // ..nope, process them
                 for (let typeHash in data.metadata) {
                     let { descriptor, typeName, instances } = data.metadata[typeHash];
                     let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
@@ -360,6 +362,11 @@ class ShovelClient {
                     if (generateList) {
                         list.push({ typeName, instances });
                     }
+                }
+
+                // setup global names
+                for (let name in data.globals) {
+                    globalNames.set(name, data.globals[name]);
                 }
 
                 // update data uuids
@@ -488,7 +495,8 @@ class ShovelClient {
 
         this.get = (uid) => {
 
-            return instances.get(uid);
+            const key = typeof uid == 'number' ? uid : globalNames.get(uid);
+            return instances.get(key);
         };
 
         this.list = (forceRequest = false) => {
