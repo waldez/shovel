@@ -86,6 +86,14 @@ function jsonToMap(json) {
     return map;
 }
 
+class Metadata {
+
+    constructor(data) {
+
+        this.data = data;
+    }
+}
+
 class FunctionHandler {
 
     constructor(id, callback) {
@@ -108,16 +116,6 @@ class Shovel {
         // TODO: Map of registered prototypes to be able fast compare
 
         const jsonHandlers = {
-            regInstances: {
-                name: 'Wrapper',
-                instanceOf: (instance, session) => this.hasInstance(instance, session),
-                stringify: (instance, session) => {
-
-                    const wrapper = this.getInstance(instance, session);
-                    const { typeHash, typeName } = Wrapper.getMeta(wrapper);
-                    return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
-                }
-            },
             Wrapper: {
                 name: 'Wrapper',
                 ctor: Wrapper,
@@ -136,6 +134,47 @@ class Shovel {
                     throw new Error(`Parse error! Wrapper of type(hash) '${typeHash}' doesn't have instance uid '${'${uid}'}'`);
                     // TODO: better
                     return null;
+                }
+            },
+            regInstances: {
+                name: 'Wrapper',
+                instanceOf: (instance, session) => this.hasInstance(instance, session),
+                stringify: (instance, session) => {
+
+                    const wrapper = this.getInstance(instance, session);
+                    const { typeHash, typeName } = Wrapper.getMeta(wrapper);
+                    return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
+                }
+            },
+            metadata: {
+                name: 'Metadata',
+                ctor: Metadata,
+                stringify: (instance, session) => {
+
+                    return JSON.stringify(instance.data);
+                }
+            },
+            tmpInstances: {
+                name: 'Wrapper',
+                instanceOf: (instance, session) => {
+
+                    // test yet not registered class
+                    if (!this.hasInstance(instance, session)) {
+                        const proto = Object.getPrototypeOf(instance);
+                        // discard plain Object derivates and also those with no protoype at all
+                        if (proto !== Object.prototype && typeof proto != 'undefined') {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                },
+                stringify: (instance, session) => {
+
+                    const wrapper = this.register(instance, { session });
+                    // const wrapper = this.getInstance(instance, session);
+                    const { typeHash, typeName } = Wrapper.getMeta(wrapper);
+                    return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
                 }
             },
             FunctionHandler: {
@@ -246,15 +285,16 @@ class Shovel {
 
         const { name, persistence, /*scope,*/ session } = options;
         const scope = session ? SCOPE.SESSION : SCOPE.GLOBAL;
-        const {
-            protoType,
-            protoHash,
-            typeName,
-            uid
-        } = analyzeInstance(instance);
 
         let wrapper = this.getInstance(instance, session);
         if (!wrapper) {
+
+            const {
+                protoType,
+                protoHash,
+                typeName,
+                uid
+            } = analyzeInstance(instance);
 
             wrapper = new Wrapper(instance, { uid, proccessIherited: true });
             Wrapper.setMeta(wrapper, {
@@ -312,12 +352,12 @@ class Shovel {
 
     buildMetadata(session, generateNew) {
 
-        return {
-            dataUuid: session.data.uuid,
-            globalDataUuid: this.globalData.uuid,
-            globals: generateNew ? mapToJson(this.globWrappers) : {},
-            metadata: generateNew ? this.listRegistered(session) : {}
-        };
+        return new Metadata({
+                    dataUuid: session.data.uuid,
+                    globalDataUuid: this.globalData.uuid,
+                    globals: generateNew ? mapToJson(this.globWrappers) : {},
+                    metadata: generateNew ? this.listRegistered(session) : {}
+                });
     }
 
     listRegistered(session) {
@@ -351,13 +391,14 @@ class Shovel {
         // if client needs new metadata to be generadted
         const encodedData = this.jsone.encode({ [path]: { data } }, session);
         // now create metadata
-        const encodedMetadata = this.buildMetadata(session, !this.dataUuidsEqual(
-            clientMetadata.globalDataUuid,
-            clientMetadata.dataUuid,
-            session));
+        const encodedMetadata = this.jsone.encode(
+            this.buildMetadata(session, !this.dataUuidsEqual(
+                clientMetadata.globalDataUuid,
+                clientMetadata.dataUuid,
+                session)));
 
         // stick them together as JSON string (two item array [metadata, data])
-        return '[' + JSON.stringify(encodedMetadata) + ',' + encodedData + ']';
+        return '[' + encodedMetadata + ',' + encodedData + ']';
     }
 
     processRawData(rawData, request) {

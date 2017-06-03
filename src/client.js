@@ -177,6 +177,14 @@ class ShovelClient {
 
         // handlers for unknown types (Wrapper type)
         const jsonHandlers = {
+            Metadata: {
+                name: 'Metadata',
+                ctor: Metadata.prototype.constructor,
+                parse: (data) => {
+
+                    return Metadata(data);
+                }
+            },
             FunctionHandler: {
                 name: 'FunctionHandler',
                 ctor: FunctionHandler.prototype.constructor,
@@ -231,6 +239,7 @@ class ShovelClient {
 
             options.host = serviceHost;
             options.port = servicePort;
+            options.bodyParser = bodyParser;
 
             const headers = {
                 'x-shovel-session': getSessionId()
@@ -274,7 +283,7 @@ class ShovelClient {
             hookTimer = null;
 
             // needed this direct promise, to be able call abort
-            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook', bodyParser }, [buildMetadata()]);
+            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook' }, [buildMetadata()]);
             hookPromise
                 .then(data => {
 
@@ -343,12 +352,17 @@ class ShovelClient {
             };
         }
 
+        // helper class for building metadata using JSONE
+        function Metadata(data) {
+
+            processMetadata(data);
+        }
+
         function processMetadata(data, generateList) {
 
             const list = generateList ? [] : null;
             // do we have latest metadata? ..
             if (data.dataUuid != dataUuid || data.globalDataUuid != globalDataUuid) {
-
                 // ..nope, process them
                 for (let typeHash in data.metadata) {
                     let { descriptor, typeName, instances } = data.metadata[typeHash];
@@ -373,6 +387,8 @@ class ShovelClient {
                 dataUuid = data.dataUuid;
                 globalDataUuid = data.globalDataUuid;
             }
+
+            return list;
         }
 
         /**
@@ -385,9 +401,6 @@ class ShovelClient {
          */
         function shovel(uid, action, name, args) {
 
-            // TODO: encode args(data) to store types etc..
-            const bodyParser = jsone.decode.bind(jsone);
-
             let postData = [
                 buildMetadata(),
                 {
@@ -399,10 +412,8 @@ class ShovelClient {
                 }
             ];
 
-            return boundRequest({ method: 'POST', path: url, bodyParser }, jsone.encode(postData))
+            return boundRequest({ method: 'POST', path: url }, jsone.encode(postData))
                 .then(([metadata, data]) => {
-
-                    processMetadata(metadata);
                     // TODO: decode data! and much more (like raise Shovel event, log etc)
                     return data[uid].data;
                 })
@@ -507,8 +518,7 @@ class ShovelClient {
                     { action: ACTIONS.list }
                 ];
 
-                return boundRequest({ method: 'POST', path: url }, postData)
-                    .then(([metadata, data]) => processMetadata(metadata, true));
+                return boundRequest({ method: 'POST', path: url }, postData);
             } else {
                 let types = new Map();
                 instances.forEach((instance, uid) => {
