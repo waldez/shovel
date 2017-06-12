@@ -15,6 +15,8 @@
  * ▀▀▀▘▀▘▘▀▝▝
  */
 
+const fs = require('fs');
+const pathUtil = require('path');
 // Generate a v1 UUID (time-based)
 const uuidV1 = require('uuid/v1');
 // Generate a v4 UUID (random)
@@ -172,7 +174,6 @@ class Shovel {
                 stringify: (instance, session) => {
 
                     const wrapper = this.register(instance, { session });
-                    // const wrapper = this.getInstance(instance, session);
                     const { typeHash, typeName } = Wrapper.getMeta(wrapper);
                     return `{"uid":${Wrapper.getUID(wrapper)},"typeHash":${typeHash}}`;
                 }
@@ -210,6 +211,8 @@ class Shovel {
             // define routes
             'OPTIONS': (requestData, request) => Promise.resolve(200),
             'GET': {
+                '/shovel.js': () => this.getClientSrc(),
+                '/shovel.min.js': () => this.getClientSrc(true)
                 // not supported for now
             },
             'POST': {
@@ -230,6 +233,17 @@ class Shovel {
 
         // start the fun!
         this.server.start();
+    }
+
+    getClientSrc(minified) {
+
+        return new Promise((resolve, reject) => {
+
+            fs.readFile(
+                pathUtil.join(__dirname, `../dist/client_bundle${minified ? '.min' : ''}.js`),
+                'utf8',
+                (error, clientSrc) => error ? reject(error) : resolve(clientSrc));
+        });
     }
 
     getServer() { return this.server.server; }
