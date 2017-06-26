@@ -233,7 +233,13 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 }
 
 class ShovelClient {
-    constructor({ serviceHost = 'localhost', servicePort = '31415', request, getSessionId }) {
+    constructor({
+        serviceHost = 'localhost',
+        servicePort = '31415',
+        request,
+        getSessionId,
+        reverseHookEnabled = true
+    }) {
 
         const boundShovel = shovel.bind(this);
         // name:uid
@@ -248,6 +254,8 @@ class ShovelClient {
         // data id & global data uuid
         let dataUuid = 0;
         let globalDataUuid = 0;
+
+
 
         // handlers for unknown types (Wrapper type)
         const jsonHandlers = {
@@ -415,7 +423,9 @@ class ShovelClient {
         // we don't want to bleed out of stack, do we?
         function nextTickForeverHook() {
 
-            setTimeout(foreverHook, 0);
+            if (reverseHookEnabled) {
+                setTimeout(foreverHook, 0);
+            }
         }
 
         function buildMetadata() {
@@ -574,7 +584,7 @@ class ShovelClient {
 
         this.initialize = () => {
 
-            foreverHook();
+            nextTickForeverHook();
             return this.list(true).then(() => this);
         };
 
@@ -618,9 +628,12 @@ class ShovelClient {
         return Wrapper;
     }
 
-    static create(request, getSessionId, { serviceHost, servicePort } = {}, fetchList = true) {
+    static create(request, getSessionId, options = {}, fetchList = true) {
 
-        let client = new ShovelClient({ serviceHost, servicePort, request, getSessionId });
+        options.request = request;
+        options.getSessionId = getSessionId;
+
+        let client = new ShovelClient(options);
         return fetchList ? client.initialize() : client;
     }
 
@@ -758,7 +771,10 @@ const DATA_TYPES = {
     },
     Error: { name: 'Error', ctor: Error },
     Array: { name: 'Array', ctor: Array, stringify: arrayStringify }
+    // TODO: !!!
     // Buffer: { name: 'Buffer', ctor: Buffer } // TODO: !!! Typed Arrays?
+    // Map (using mapToJson - probably)
+    // Set
 };
 
 const INHERITABLES = Object.keys(DATA_TYPES).map(key => DATA_TYPES[key]).filter(isInheritable);

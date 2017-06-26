@@ -39,7 +39,10 @@ const DATA_TYPES = {
     },
     Error: { name: 'Error', ctor: Error },
     Array: { name: 'Array', ctor: Array, stringify: arrayStringify }
+    // TODO: !!!
     // Buffer: { name: 'Buffer', ctor: Buffer } // TODO: !!! Typed Arrays?
+    // Map (using mapToJson - probably)
+    // Set
 };
 
 const INHERITABLES = Object.keys(DATA_TYPES).map(key => DATA_TYPES[key]).filter(isInheritable);
