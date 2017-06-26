@@ -393,7 +393,16 @@ class ShovelClient {
                     nextTickForeverHook();
                 }, error => {
 
-                    if (error.code === 'ECONNRESET' || error.response === '"aborted"' ) {
+                    // TODO: FIX!!
+                    // jakmile to vytimeoutuje, tak je to zruseno na clientovi, coz znamena,
+                    // ze server ma neplatne spojeni (tudiz ta promisa ve scopu je k nicemu)
+                    // OSETRIT!! pred odeslanim zjistit, jestli je to spojeni jeste cerstvy!!!
+                    // estli ne, tak pockat na dalsi forever hook
+                    // (toto je asi duvod, proc mi to obcas neodesilalo ze serveru)
+
+                    if (error.code === 'ECONNRESET' ||
+                        error.response === '"aborted"' ||
+                        error.statusCode == 0) {
                         // NOOP - this is expected
                     } else {
                         console.log('Error occured on forever hook:\n', error);
