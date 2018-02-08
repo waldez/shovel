@@ -13,7 +13,7 @@
   "dependencies": {
     "bluebird": "^3.4.6",
     "esprima": "^3.1.0",
-    "farmhash": "^1.2.1",
+    "farmhash": "^2.0.5",
     "uuid": "^3.0.1"
   },
   "devDependencies": {
