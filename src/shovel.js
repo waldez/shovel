@@ -16,6 +16,7 @@
  */
 
 const fs = require('fs');
+const EventEmitter = require('events');
 const pathUtil = require('path');
 // Generate a v1 UUID (time-based)
 const uuidV1 = require('uuid/v1');
@@ -111,10 +112,11 @@ class FunctionHandler {
     }
 }
 
-class Shovel {
+class Shovel extends EventEmitter {
 
     constructor(/*options*/{ port = DEFAULT_PORT } = {}) {
 
+        super();
         // TODO: Map of registered prototypes to be able fast compare
 
         const jsonHandlers = {
@@ -434,6 +436,7 @@ class Shovel {
         if (!session) {
             session = new Session(sessionId);
             this.sessionMap.set(sessionId, session);
+            this.emit('newSession', sessionId, session);
         }
 
         return session;
