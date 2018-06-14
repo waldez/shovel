@@ -187,7 +187,11 @@ class Shovel extends EventEmitter {
 
                     let handler = session.getFnHandler(id);
                     if (!handler) {
-                        handler = new FunctionHandler(id, (...args) => session.consumeHandlerResult(id, args));
+                        handler = new FunctionHandler(id,
+                            (...args) => this.server.sendResponse(session.id, this.jsone.encode({
+                                    id,
+                                    data: args
+                                }, session)));
                         session.setFnHandler(handler);
                     }
                     // !! pridat handler do metadat oznaceny k odregistrovani na serveru
@@ -210,27 +214,10 @@ class Shovel extends EventEmitter {
 
         this.port = port;
         this.server = new Server(port, {
-            // define routes
-            'OPTIONS': (requestData, request) => Promise.resolve(200),
-            'GET': {
-                '/shovel.js': () => this.getClientSrc(),
-                '/shovel.min.js': () => this.getClientSrc(true)
-                // not supported for now
-            },
-            'POST': {
-                '/': this.processRequest.bind(this),
-                '/foreverhook': this.processForeverHook.bind(this)
-            }
-        });
-
-        this.server.on('requestaborted', request => {
-
-            // be more clever... this is not nice solution
-            if (request.url == '/foreverhook') {
-                const sessionId = request.headers['x-shovel-session'];
-                let session = this.getSessionData(sessionId);
-                session.rejectForeverHook('aborted');
-            }
+            Promise,
+            incomingMessageHandler: this.processRequest.bind(this),
+            clientSourcePromise: this.getClientSrc(),
+            clientSourceMinPromise: this.getClientSrc(true)
         });
 
         // start the fun!
@@ -417,9 +404,9 @@ class Shovel extends EventEmitter {
         return '[' + encodedMetadata + ',' + encodedData + ']';
     }
 
-    processRawData(rawData, request) {
+    processRawData(rawData, sessionId) {
 
-        const session = this.getSessionData(request.headers['x-shovel-session']);
+        const session = this.getSessionData(sessionId);
         const [metadata = {}, requestData = {}] = this.jsone.decode(rawData, session);
 
         return {
@@ -442,103 +429,64 @@ class Shovel extends EventEmitter {
         return session;
     }
 
-    processForeverHook(rawData, request) {
+    sendMessage(data, sessionId) {
 
-        let {
-            metadata,
-            requestData,
-            session
-        } = this.processRawData(rawData, request);
-
-        return new Promise((resolve, reject) => {
-
-            let resolveEncoded = data => resolve(this.jsone.encode(data, session));
-
-            // TODO: FIX!!
-            // jakmile to vytimeoutuje, tak je to zruseno na clientovi, coz znamena,
-            // ze server ma neplatne spojeni (tudiz ta promisa ve scopu je k nicemu)
-            // OSETRIT!! pred odeslanim zjistit, jestli je to spojeni jeste cerstvy!!!
-            // estli ne, tak pockat na dalsi forever hook
-            // (toto je asi duvod, proc mi to obcas neodesilalo ze serveru)
-
-            // TODO:
-            // FIX:
-            // prosetrit! que?
-            // why?!?
-            if (session.foreverHook) {
-                session.rejectForeverHook('aborted');
-            }
-
-            session.setForeverHook(resolveEncoded, reject);
-        });
+        const session = this.getSessionData(sessionId);
+        return this.server.sendMessage(this.jsone.encode(data, session), sessionId);
     }
 
-    processRequest(rawData, request) {
+    async processRequest(rawData, sessionId) {
 
         let {
             metadata,
             requestData,
             session
-        } = this.processRawData(rawData, request);
+        } = this.processRawData(rawData, sessionId);
 
         let { action, path = 0, field, data } = requestData;
 
         if (!action) { // in future, in this case, we want to send some info data, or whatever
-            return Promise.reject('Malformed request!');
+            throw new Error('Malformed request!');
         }
 
         // wrapper independent requests
         if (action == 'list') {
-            return Promise.resolve(this.buildResult('Ξ', session, metadata, null));
-            // return Promise.resolve(this.listRegistered());
+            return this.buildResult('Ξ', session, metadata, null);
         }
 
         // wrapper dependent requests
         let wrapper = this.getWrapperByPath(path, session);
         if (!wrapper) {
-            return Promise.reject(`No wrapper at path '${path}'!`);
+            throw new Error(`No wrapper at path '${path}'!`);
         }
 
         // check the field
         if (!wrapper.hasOwnProperty(field)) {
-            return Promise.reject(`No such field '${field}' on wrapper '${path}'!`);
+            throw new Error(`No such field '${field}' on wrapper '${path}'!`);
         }
 
         // TODO: refactor to function map
         if (action == 'get') {
-            try {
-                return Promise.resolve(this.buildResult(path, session, metadata, wrapper[field]));
-            } catch (error) {
-                return Promise.reject(error);
-            }
+            return this.buildResult(path, session, metadata, wrapper[field]);
         }
 
         if (action == 'set') {
-            try {
-                return Promise.resolve(this.buildResult(path, session, metadata, wrapper[field] = data));
-            } catch (error) {
-                return Promise.reject(error);
-            }
+            return this.buildResult(path, session, metadata, wrapper[field] = data);
         }
 
         if (action == 'call') {
-
             if (typeof wrapper[field] != 'function') {
-                return Promise.reject(`No such function '${field}' on wrapper '${path}'!`);
+                throw new Error(`No such function '${field}' on wrapper '${path}'!`);
             }
 
-            try {
-                return wrapper[field].apply(wrapper, data)
-                    .then(this.buildResult.bind(this, path, session, metadata));
-            } catch (error) {
-                return Promise.reject(error);
-            }
+            const callResult = await wrapper[field].apply(wrapper, data);
+            return this.buildResult(path, session, metadata, callResult);
         }
 
-        return Promise.resolve({
+        return {
             message: 'Hello Shovel!',
             originalRequest: JSON.stringify(requestData)
-        });
+        };
     }
 }
 

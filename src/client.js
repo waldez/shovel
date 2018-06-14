@@ -294,7 +294,6 @@ class ShovelClient {
             hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook' }, [buildMetadata()]);
             hookPromise
                 .then(data => {
-
                     if (hookPromise) {
                         // fullfilled, so clear it
                         hookPromise = null;
