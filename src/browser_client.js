@@ -20,7 +20,7 @@ const getSessionId = () => {
     return sessionId;
 };
 
-const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
+const request = (processResponse, { method = 'POST', port, host, path = '/' }, data, headers) => {
 
     let req;
     let promise = new Promise((resolve, reject) => {
@@ -41,7 +41,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
         req.onreadystatechange = () => {
 
             if (req.readyState === XMLHttpRequest.DONE) {
-                processResponse(resolve, reject, req.responseText, req.status, /*req.statusMessage*/ undefined, bodyParser);
+                processResponse(resolve, reject, req.responseText, req.status, /*req.statusMessage*/ undefined);
             }
         };
         req.open(method, `http://${host}:${port}${path}`, true);

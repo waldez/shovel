@@ -18,9 +18,17 @@ function buildHeaders(sessionId) {
 
 class Server extends EventEmitter {
 
-    constructor(port, { clientSourcePromise, clientSourceMinPromise, Promise, incomingMessageHandler }) {
+    constructor(port,
+        {
+            clientSourcePromise,
+            clientSourceMinPromise,
+            Promise,
+            incomingMessageHandler,
+            verbose = false
+        }) {
 
         super();
+        this.verbose = verbose;
         this.fHooks = new Map();
         this.port = port;
         this.incomingMessageHandler = incomingMessageHandler;
@@ -42,9 +50,17 @@ class Server extends EventEmitter {
         this.server = http.createServer(this.requestListener.bind(this));
     }
 
+    log(...args) {
+
+        if (this.verbose) {
+            console.log(new Date() + ':', ...args);
+        }
+    }
+
     start() {
 
         this.server.listen(this.port);
+        this.log('Server started - listenning at port:', this.port);
     }
 
     close(callback) {
@@ -165,6 +181,7 @@ class Server extends EventEmitter {
                     res.end(Buffer.from(responseData));
                 })
                 .catch(error => {
+                    this.log('[requestListener]', error);
                     if (error instanceof Error) {
                         error = error.stack;
                     }

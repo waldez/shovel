@@ -217,7 +217,8 @@ class Shovel extends EventEmitter {
             Promise,
             incomingMessageHandler: this.processRequest.bind(this),
             clientSourcePromise: this.getClientSrc(),
-            clientSourceMinPromise: this.getClientSrc(true)
+            clientSourceMinPromise: this.getClientSrc(true),
+            verbose: !true
         });
 
         // start the fun!

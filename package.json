@@ -1,7 +1,7 @@
 {
   "name": "shovel",
   "version": "0.1.0",
-  "description": "SHOVEL stands for Shit Happens Online - Library",
+  "description": "SHOVEL stands for Shit Happens Online Via Epic Library",
   "author": "Tomas Waldauf <tomas@waldauf.cz>",
   "main": "src/shovel.js",
   "private": true,

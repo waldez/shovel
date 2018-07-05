@@ -7,7 +7,7 @@ const ShovelClient = require('./client');
 const sessionId = ShovelClient.generateSessionId();
 const getSessionId = () => sessionId;
 
-const request = (processResponse, { method = 'POST', port, host, path = '/', bodyParser }, data, headers) => {
+const request = (processResponse, { method = 'POST', port, host, path = '/' }, data, headers) => {
 
     let req;
     let promise = new Promise((resolve, reject) => {
@@ -17,7 +17,7 @@ const request = (processResponse, { method = 'POST', port, host, path = '/', bod
             // Continuously update stream with data
             let body = '';
             res.on('data', d => { body += d; });
-            res.on('end', () => { processResponse(resolve, reject, body, res.statusCode, res.statusMessage, bodyParser); });
+            res.on('end', () => { processResponse(resolve, reject, body, res.statusCode, res.statusMessage); });
         });
 
         req.on('error', error => {

@@ -1,46 +1,20 @@
 'use strict';
+// modules
 const JSONE = require('./jsone');
+const Net = require('./client_net');
 
-// 25 seconds hook timeout
-const HOOK_TIMEOUT = 25 * 1000;
+// symbols
 const UID_KEY = Symbol('uid');
 const TYPE_KEY = Symbol('type');
 
+// constants
 const ACTIONS = Object.freeze({
     list: 'list',
     call: 'call',
     get: 'get',
     set: 'set'
 });
-
-const url = '/';
-
-const OK_STATUSES = [200];
-const DEFAULT_BODY_PARSER = JSON.parse.bind(JSON);
-
-let isOkStatus = status => OK_STATUSES.indexOf(status) > -1;
-let processResponse = (resolve, reject, body, statusCode, statusMessage, bodyParser = DEFAULT_BODY_PARSER) => {
-
-    let response = body;
-
-    if (isOkStatus(statusCode)) {
-        try {
-            Promise.resolve(bodyParser(body))
-                .then(resolve)
-                .catch(reject);
-        } catch (parsingError) {
-            reject(parsingError);
-        }
-
-    } else {
-        let errorResponse = {
-            statusCode,
-            statusMessage,
-            response
-        };
-        reject(errorResponse);
-    }
-};
+const URL = '/';
 
 function getUid() {
 
@@ -58,17 +32,15 @@ class FunctionHandler {
     constructor(handlerFunction) {
 
         if (typeof handlerFunction == 'function') {
-            let id = getUid();
+            const id = getUid();
 
             this.call = function(args) {
 
                 try {
-                    var result = handlerFunction(...args);
+                    return Promise.resolve(handlerFunction(...args));
                 } catch (error) {
                     return Promise.reject(error);
                 }
-
-                return Promise.resolve(result);
             };
 
             Object.defineProperties(this, {
@@ -93,7 +65,7 @@ class FunctionHandler {
  * @param {string} typeName
  * @param {string} typeHash
  */
-let Wrapper = function(typeName, typeHash) {
+const Wrapper = function(typeName, typeHash) {
 
     Object.defineProperties(this, {
         [TYPE_KEY]: {
@@ -118,7 +90,7 @@ Wrapper.getUid = function(instance) { return _w(instance)[UID_KEY]; };
 Wrapper.equals = function(a, b) { return _w(a)[UID_KEY] == _w(b)[UID_KEY]; };
 Wrapper.stringify = function(instance) {
 
-    let wrapper = _w(instance);
+    const wrapper = _w(instance);
     return `{"uid":${wrapper[UID_KEY]},"typeHash":${wrapper[TYPE_KEY].typeHash}}`;
 };
 
@@ -130,23 +102,22 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 
     // this cheap trick is for the name of the constructor function
     const wrapperClassName = typeName + 'Wrapper';
-    let dummy = {
+    const dummy = {
         [wrapperClassName]: function(uid) { this[UID_KEY] = uid; }
     };
 
-    let classConstructor = dummy[wrapperClassName];
+    const classConstructor = dummy[wrapperClassName];
+    const proto = new Wrapper(typeName, typeHash);
 
-    let proto = new Wrapper(typeName, typeHash);
-
-    for (var key in descriptor) {
-        let { type, parameters } = descriptor[key];
+    for (let key in descriptor) {
+        const { type, parameters } = descriptor[key];
 
         if (type == 'function') {
-            let joinedPars = parameters.join();
-            let pars = joinedPars.length != '' ? ',' + joinedPars : '';
-            let body = `(function(${joinedPars}) { return callFunction(this,'${key}'${pars}); })`;
+            const joinedPars = parameters.join();
+            const pars = joinedPars.length != '' ? ',' + joinedPars : '';
+            const body = `(function(${joinedPars}) { return callFunction(this,'${key}'${pars}); })`;
             // new Function() doesn't create closure
-            let fn = eval(body);
+            const fn = eval(body);
             proto[`${key}`] = fn;
         } else {
             proto[`${key}`] = function(value) { return typeof value == 'undefined' ? getProperty(this, key) : setProperty(this, key, value); };
@@ -180,8 +151,6 @@ class ShovelClient {
         // data id & global data uuid
         let dataUuid = 0;
         let globalDataUuid = 0;
-
-
 
         // handlers for unknown types (Wrapper type)
         const jsonHandlers = {
@@ -233,29 +202,24 @@ class ShovelClient {
             }
         };
 
-        // start with empty promise and hook timeout timer
-        let hookPromise = null;
-        let hookTimer = null;
-
+        // create Extended JSON encoder/decoder
         const jsone = new JSONE({ handlers: jsonHandlers });
         const bodyParser = jsone.decode.bind(jsone);
 
+        // create net comunication helper
+        const net = new Net({
+            requestFn: request,
+            host: serviceHost,
+            port: servicePort,
+            sessionId: getSessionId(),
+            bodyParser,
+            buildMetadata,
+            onHandlerData: onHandlerData.bind(this),
+            reverseHookEnabled
+        });
+
         // private stuff
         // =============
-
-        function boundRequest(options = {}, data) {
-
-            options.host = serviceHost;
-            options.port = servicePort;
-            options.bodyParser = bodyParser;
-
-            const headers = {
-                'x-shovel-session': getSessionId()
-            };
-
-            return request(processResponse, options, data, headers);
-        };
-
         function addWrapperClass(descriptor, typeName, typeHash) {
 
             let wrapper = wrappers.get(typeHash);
@@ -284,84 +248,6 @@ class ShovelClient {
             return instance;
         }
 
-        const foreverHook = () => {
-
-            // clear the timer
-            clearTimeout(hookTimer);
-            hookTimer = null;
-
-            // needed this direct promise, to be able call abort
-            hookPromise = boundRequest({ method: 'POST', path: url + 'foreverhook' }, [buildMetadata()]);
-            hookPromise
-                .then(data => {
-                    if (hookPromise) {
-                        // fullfilled, so clear it
-                        hookPromise = null;
-
-                        if (Array.isArray(data)) {
-                            data.forEach(handlerData => {
-
-                                let handler = this.getHandler(handlerData.id);
-                                if (handler) {
-                                    // could return promise, which could be sent back to server...
-                                    let result = Promise.resolve(handler.call(handlerData.data));
-                                } else {
-                                    // NOOP - just ignore
-                                }
-                            });
-                        } else {
-                            // TODO: what? some kind of error..
-                        }
-                    }
-
-                    // keep the cycle alive
-                    nextTickForeverHook();
-                }, error => {
-
-                    // TODO: FIX!!
-                    // jakmile to vytimeoutuje, tak je to zruseno na clientovi, coz znamena,
-                    // ze server ma neplatne spojeni (tudiz ta promisa ve scopu je k nicemu)
-                    // OSETRIT!! pred odeslanim zjistit, jestli je to spojeni jeste cerstvy!!!
-                    // estli ne, tak pockat na dalsi forever hook
-                    // (toto je asi duvod, proc mi to obcas neodesilalo ze serveru)
-
-                    if (error.code === 'ECONNRESET' ||
-                        error.response === '"aborted"' ||
-                        error.statusCode == 0) {
-                        // NOOP - this is expected
-                    } else {
-                        console.log('Error occured on forever hook:\n', error);
-                    }
-
-                    // fullfilled with error, so clear it
-                    hookPromise = null;
-                });
-
-            // set the timeout
-            hookTimer = setTimeout(abortForeverHook, HOOK_TIMEOUT);
-        };
-
-        function abortForeverHook() {
-
-            hookTimer = null;
-            // if there is pending request, cancel it
-            if (hookPromise) {
-                hookPromise.abort();
-                hookPromise = null;
-
-            }
-            // restart the loop
-            nextTickForeverHook();
-        }
-
-        // we don't want to bleed out of stack, do we?
-        function nextTickForeverHook() {
-
-            if (reverseHookEnabled) {
-                setTimeout(foreverHook, 0);
-            }
-        }
-
         function buildMetadata() {
 
             return {
@@ -383,8 +269,8 @@ class ShovelClient {
             if (data.dataUuid != dataUuid || data.globalDataUuid != globalDataUuid) {
                 // ..nope, process them
                 for (let typeHash in data.metadata) {
-                    let { descriptor, typeName, instances } = data.metadata[typeHash];
-                    let WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
+                    const { descriptor, typeName, instances } = data.metadata[typeHash];
+                    const WrapperClass = addWrapperClass(descriptor, typeName, Number(typeHash));
 
                     instances.forEach(uid => {
 
@@ -410,6 +296,27 @@ class ShovelClient {
         }
 
         /**
+         * Handles data for callbacks
+         * @param  {Object} data
+         */
+        function onHandlerData(data) {
+            if (Array.isArray(data)) {
+                data.forEach(handlerData => {
+
+                    const handler = this.getHandler(handlerData.id);
+                    if (handler) {
+                        // could return promise, which could be sent back to server...
+                        const result = Promise.resolve(handler.call(handlerData.data));
+                    } else {
+                        // NOOP - just ignore
+                    }
+                });
+            } else {
+                // TODO: what? some kind of error..
+            }
+        };
+
+        /**
          * shovels the data to server, process response and returns appropriate response
          * @param  {string} uid
          * @param  {string} action
@@ -430,7 +337,7 @@ class ShovelClient {
                 }
             ];
 
-            return boundRequest({ method: 'POST', path: url }, jsone.encode(postData))
+            return net.request({ method: 'POST', path: URL }, jsone.encode(postData))
                 .then(([metadata, data]) => {
                     // TODO: decode data! and much more (like raise Shovel event, log etc)
                     return data[uid].data;
@@ -518,8 +425,8 @@ class ShovelClient {
 
         this.initialize = () => {
 
-            nextTickForeverHook();
-            return this.list(true).then(() => this);
+            // fetch the list from server & start forever hook
+            return this.list(true).then(() => net.nextTickForeverHook() || this);
         };
 
         this.get = (uid) => {
@@ -536,7 +443,7 @@ class ShovelClient {
                     { action: ACTIONS.list }
                 ];
 
-                return boundRequest({ method: 'POST', path: url }, postData);
+                return net.request({ method: 'POST', path: URL }, postData);
             } else {
                 let types = new Map();
                 instances.forEach((instance, uid) => {
