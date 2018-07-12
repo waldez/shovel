@@ -1,5 +1,8 @@
 'use strict';
 
+const WebSocket = require('isomorphic-ws');
+const wsHelpers = require('./ws-helpers');
+
 // 25 seconds hook timeout
 const HOOK_TIMEOUT = 25 * 1000;
 const OK_STATUSES = [200];
@@ -34,12 +37,60 @@ class Net {
         // assign with type control
         this.host = getOfType(host, 'string');
         this.port = getOfType(port, 'string');
+
         this.sessionId = getOfType(sessionId, 'string');
         this.requestFn = getOfType(requestFn, 'function');
         this.bodyParser = getOfType(bodyParser, 'function');
         this.buildMetadata = getOfType(buildMetadata, 'function');
         this.onHandlerData = getOfType(onHandlerData, 'function');
         this.reverseHookEnabled = getOfType(reverseHookEnabled, 'boolean');
+
+        const awaitingResponses = new Map();
+        const concurentIds = new wsHelpers.ConcurentIds();
+        const ws = new WebSocket('ws://' + host + ':' + port);
+        ws.onmessage = event => {
+
+            const { type, id, rawData } = wsHelpers.extractHeader(event.data);
+            switch (type) {
+                case 'q': // request - function handler
+                    try {
+                        const body = this.bodyParser(rawData);
+                        this.onHandlerData(body);
+                    } catch (parsingError) {
+                        // TODO:
+                        /*who knows?*/
+                    }
+                    return;
+
+                case 's': // response
+                    awaitingResponses.get(id)(rawData, 200, null);
+                    return;
+
+                case 'e': // error
+                    awaitingResponses.get(id)(rawData, 500, 'Error vole!');
+                    return;
+            }
+        };
+
+        ws.onopen = event => {
+
+            this.request = (options /*ignored*/, data) => {
+
+                return new Promise((resolve, reject) => {
+
+                    const requestId = concurentIds.popId();
+                    const requestData = wsHelpers.insertHeader(data, 'q', requestId);
+                    awaitingResponses.set(requestId, (body, statusCode, statusMessage) => {
+                        // cleanup
+                        awaitingResponses.delete(requestId);
+                        concurentIds.pushId(requestId);
+                        // process the response
+                        return this.processResponse(resolve, reject, body, 200, null);
+                    });
+                    ws.send(requestData);
+                });
+            };
+        };
     }
 
     processResponse(resolve, reject, body, statusCode, statusMessage) {
@@ -136,7 +187,7 @@ class Net {
     // we don't want to bleed out of stack, do we?
     nextTickForeverHook() {
 
-        if (this.reverseHookEnabled) {
+        if (false && this.reverseHookEnabled) {
             setTimeout(this.foreverHook.bind(this), 0);
         }
     }

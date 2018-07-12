@@ -188,7 +188,7 @@ class Shovel extends EventEmitter {
                     let handler = session.getFnHandler(id);
                     if (!handler) {
                         handler = new FunctionHandler(id,
-                            (...args) => this.server.sendResponse(session.id, this.jsone.encode({
+                            (...args) => this.server.sendHandlerRequest(session.id, this.jsone.encode({
                                     id,
                                     data: args
                                 }, session)));
@@ -218,7 +218,7 @@ class Shovel extends EventEmitter {
             incomingMessageHandler: this.processRequest.bind(this),
             clientSourcePromise: this.getClientSrc(),
             clientSourceMinPromise: this.getClientSrc(true),
-            verbose: !true
+            verbose: true
         });
 
         // start the fun!
@@ -392,7 +392,7 @@ class Shovel extends EventEmitter {
 
         // first of all, encode data, during encoding could be new (in session scope)
         // wrappers been registered, so, after that, we compare data uuids, so we will know
-        // if client needs new metadata to be generadted
+        // if client needs new metadata to be generated
         const encodedData = this.jsone.encode({ [path]: { data } }, session);
         // now create metadata
         const encodedMetadata = this.jsone.encode(
@@ -436,7 +436,7 @@ class Shovel extends EventEmitter {
         return this.server.sendMessage(this.jsone.encode(data, session), sessionId);
     }
 
-    async processRequest(rawData, sessionId) {
+    async processRequest(rawData, sessionId, requestId) {
 
         let {
             metadata,

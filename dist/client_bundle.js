@@ -64,7 +64,7 @@ var ShovelClient =
 /******/ 	__webpack_require__.p = "";
 /******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = 1);
+/******/ 	return __webpack_require__(__webpack_require__.s = 3);
 /******/ })
 /************************************************************************/
 /******/ ([
@@ -74,8 +74,8 @@ var ShovelClient =
 "use strict";
 
 // modules
-const JSONE = __webpack_require__(3);
-const Net = __webpack_require__(2);
+const JSONE = __webpack_require__(5);
+const Net = __webpack_require__(4);
 
 // symbols
 const UID_KEY = Symbol('uid');
@@ -565,6 +565,57 @@ module.exports = ShovelClient;
 /* 1 */
 /***/ (function(module, exports, __webpack_require__) {
 
+/* WEBPACK VAR INJECTION */(function(global) {// https://github.com/maxogden/websocket-stream/blob/48dc3ddf943e5ada668c31ccd94e9186f02fafbd/ws-fallback.js
+
+var ws = null
+
+if (typeof WebSocket !== 'undefined') {
+  ws = WebSocket
+} else if (typeof MozWebSocket !== 'undefined') {
+  ws = MozWebSocket
+} else if (typeof global !== 'undefined') {
+  ws = global.WebSocket || global.MozWebSocket
+} else if (typeof window !== 'undefined') {
+  ws = window.WebSocket || window.MozWebSocket
+} else if (typeof self !== 'undefined') {
+  ws = self.WebSocket || self.MozWebSocket
+}
+
+module.exports = ws
+
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(2)))
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports) {
+
+var g;
+
+// This works in non-strict mode
+g = (function() {
+	return this;
+})();
+
+try {
+	// This works if eval is allowed (see CSP)
+	g = g || Function("return this")() || (1,eval)("this");
+} catch(e) {
+	// This works if the window reference is available
+	if(typeof window === "object")
+		g = window;
+}
+
+// g can still be undefined, but nothing to do about it...
+// We return undefined, instead of nothing here, so it's
+// easier to handle this case. if(!global) { ...}
+
+module.exports = g;
+
+
+/***/ }),
+/* 3 */
+/***/ (function(module, exports, __webpack_require__) {
+
 "use strict";
 
 
@@ -641,11 +692,14 @@ module.exports = ShovelClient.create.bind(null, request, getSessionId);
 
 
 /***/ }),
-/* 2 */
+/* 4 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
+
+const WebSocket = __webpack_require__(1);
+const wsHelpers = __webpack_require__(6);
 
 // 25 seconds hook timeout
 const HOOK_TIMEOUT = 25 * 1000;
@@ -681,12 +735,60 @@ class Net {
         // assign with type control
         this.host = getOfType(host, 'string');
         this.port = getOfType(port, 'string');
+
         this.sessionId = getOfType(sessionId, 'string');
         this.requestFn = getOfType(requestFn, 'function');
         this.bodyParser = getOfType(bodyParser, 'function');
         this.buildMetadata = getOfType(buildMetadata, 'function');
         this.onHandlerData = getOfType(onHandlerData, 'function');
         this.reverseHookEnabled = getOfType(reverseHookEnabled, 'boolean');
+
+        const awaitingResponses = new Map();
+        const concurentIds = new wsHelpers.ConcurentIds();
+        const ws = new WebSocket('ws://' + host + ':' + port);
+        ws.onmessage = event => {
+
+            const { type, id, rawData } = wsHelpers.extractHeader(event.data);
+            switch (type) {
+                case 'q': // request - function handler
+                    try {
+                        const body = this.bodyParser(rawData);
+                        this.onHandlerData(body);
+                    } catch (parsingError) {
+                        // TODO:
+                        /*who knows?*/
+                    }
+                    return;
+
+                case 's': // response
+                    awaitingResponses.get(id)(rawData, 200, null);
+                    return;
+
+                case 'e': // error
+                    awaitingResponses.get(id)(rawData, 500, 'Error vole!');
+                    return;
+            }
+        };
+
+        ws.onopen = event => {
+
+            this.request = (options /*ignored*/, data) => {
+
+                return new Promise((resolve, reject) => {
+
+                    const requestId = concurentIds.popId();
+                    const requestData = wsHelpers.insertHeader(data, 'q', requestId);
+                    awaitingResponses.set(requestId, (body, statusCode, statusMessage) => {
+                        // cleanup
+                        awaitingResponses.delete(requestId);
+                        concurentIds.pushId(requestId);
+                        // process the response
+                        return this.processResponse(resolve, reject, body, 200, null);
+                    });
+                    ws.send(requestData);
+                });
+            };
+        };
     }
 
     processResponse(resolve, reject, body, statusCode, statusMessage) {
@@ -783,7 +885,7 @@ class Net {
     // we don't want to bleed out of stack, do we?
     nextTickForeverHook() {
 
-        if (this.reverseHookEnabled) {
+        if (false) {
             setTimeout(this.foreverHook.bind(this), 0);
         }
     }
@@ -793,7 +895,7 @@ module.exports = Net;
 
 
 /***/ }),
-/* 3 */
+/* 5 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -969,6 +1071,60 @@ Object.assign(JSONE, prototype);
 JSONE.prototype = prototype;
 
 module.exports = JSONE;
+
+
+/***/ }),
+/* 6 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+const DELIMITER = 'λ';
+
+class ConcurentIds {
+
+    constructor() {
+
+        this.used = new Set();
+        this.next = 0;
+    }
+
+    popId() {
+
+        const id = this.next;
+        this.used.add(id);
+        while (this.used.has(++this.next)) {/*NOP*/}
+        return id;
+    }
+
+    pushId(id) {
+
+        this.next = this.next > id ? id : this.next;
+        this.used.delete(id);
+    }
+}
+
+module.exports = {
+
+    // TODO: better!
+    extractHeader(message) {
+
+        const [header, rawData] = message.split(DELIMITER, 2);
+        return {
+            type: header[header.length - 1],
+            id: parseInt(header),
+            rawData
+        };
+    },
+
+    insertHeader(message, type, id) {
+
+        return id + type + DELIMITER + message;
+    },
+
+    ConcurentIds
+};
 
 
 /***/ })

@@ -2,6 +2,9 @@
 const Url = require('url');
 const http = require('http');
 const EventEmitter = require('events');
+const WebSocket = require('ws');
+const uuidV1 = require('uuid/v1');
+const wsHelpers = require('./ws-helpers');
 const ForeverHook = require('./forever_hook');
 
 const RESPONSE_HEADERS = {
@@ -10,6 +13,38 @@ const RESPONSE_HEADERS = {
     'Access-Control-Allow-Methods': 'POST, GET',
     'Access-Control-Allow-Headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, x-shovel-session'
 };
+
+const PRIVATE = Symbol('private');
+
+class ClientConnection {
+
+    constructor(ws) {
+
+        this.ws = ws;
+        this[PRIVATE] = uuidV1();
+        this.concurentIds = new wsHelpers.ConcurentIds();
+    }
+
+    get id() { return this[PRIVATE]; }
+
+    sendRequest(data) {
+
+        return this.ws.send(wsHelpers.insertHeader(data, 'q', this.concurentIds.popId()));
+    }
+
+    sendResponse(data, requestId) {
+
+        this.concurentIds.pushId(requestId);
+        return this.ws.send(wsHelpers.insertHeader(data, 's', requestId));
+    }
+
+    sendError(data, requestId) {
+
+        this.concurentIds.pushId(requestId);
+        return this.ws.send(wsHelpers.insertHeader(data, 'e', requestId));
+    }
+
+}
 
 function buildHeaders(sessionId) {
 
@@ -29,6 +64,7 @@ class Server extends EventEmitter {
 
         super();
         this.verbose = verbose;
+        this.connections = new Map();
         this.fHooks = new Map();
         this.port = port;
         this.incomingMessageHandler = incomingMessageHandler;
@@ -48,6 +84,46 @@ class Server extends EventEmitter {
         };
 
         this.server = http.createServer(this.requestListener.bind(this));
+        const wss = this.wss = new WebSocket.Server({ server: this.server });
+
+        wss.on('connection', ws => {
+
+            // TODO!!!!!!
+            // CLEANUP the mess after disconnecting!
+
+            // + pushId() po function handler requestu!
+
+            const connection = new ClientConnection(ws);
+            this.connections.set(connection.id, connection);
+
+            ws.on('message', message => {
+
+                const { type, id, rawData } = wsHelpers.extractHeader(message);
+                switch (type) {
+                    case 'q': // request
+                        incomingMessageHandler(rawData, connection.id, id)
+                            .then(responseData => {
+                                responseData = typeof responseData == 'string' ? responseData : JSON.stringify(responseData);
+                                connection.sendResponse(responseData, id);
+                            })
+                            .catch(error => {
+                                this.log('[requestListener]', id, error);
+                                if (error instanceof Error) {
+                                    error = error.stack;
+                                }
+
+                                connection.sendError(JSON.stringify(error), id);
+                            });
+                        return;
+
+                    case 's': // response
+                        return;
+
+                    case 'e': // error
+                        return;
+                }
+            });
+        });
     }
 
     log(...args) {
@@ -73,7 +149,14 @@ class Server extends EventEmitter {
         // TODO:
     }
 
-    sendResponse(sessionId, data) {
+    sendHandlerRequest(sessionId, data) {
+
+        const connection = this.connections.get(sessionId);
+        if (connection) {
+            // TODO: remove brackets hack
+            connection.sendRequest('[' + data + ']');
+            return;
+        }
 
         const fHook = this.fHooks.get(sessionId);
         if (!fHook) {
@@ -148,6 +231,8 @@ class Server extends EventEmitter {
     }
 
     requestListener(req, res) {
+
+        this.log('incomming request at:', req.url);
 
         // preprocess request
         let prereq = this.preprocessRequest(req);
