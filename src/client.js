@@ -14,7 +14,6 @@ const ACTIONS = Object.freeze({
     get: 'get',
     set: 'set'
 });
-const URL = '/';
 
 function getUid() {
 
@@ -132,10 +131,7 @@ function createWrapperClass(descriptor, typeName, typeHash, shovel) {
 class ShovelClient {
     constructor({
         serviceHost = 'localhost',
-        servicePort = '31415',
-        request,
-        getSessionId,
-        reverseHookEnabled = true
+        servicePort = '31415'
     }) {
 
         const boundShovel = shovel.bind(this);
@@ -208,14 +204,11 @@ class ShovelClient {
 
         // create net comunication helper
         const net = new Net({
-            requestFn: request,
             host: serviceHost,
             port: servicePort,
-            sessionId: getSessionId(),
             bodyParser,
             buildMetadata,
-            onHandlerData: onHandlerData.bind(this),
-            reverseHookEnabled
+            onHandlerData: onHandlerData.bind(this)
         });
 
         // private stuff
@@ -337,7 +330,7 @@ class ShovelClient {
                 }
             ];
 
-            return net.request({ method: 'POST', path: URL }, jsone.encode(postData))
+            return net.request(jsone.encode(postData))
                 .then(([metadata, data]) => {
                     // TODO: decode data! and much more (like raise Shovel event, log etc)
                     return data[uid].data;
@@ -353,6 +346,8 @@ class ShovelClient {
         // ============
 
         this.getServiceInfo = () => ({ serviceHost, servicePort });
+
+        this.stop = () => net.stop();
 
         /**
          * @param  {function} handlerFunction
@@ -425,8 +420,8 @@ class ShovelClient {
 
         this.initialize = () => {
 
-            // fetch the list from server & start forever hook
-            return this.list(true).then(() => net.nextTickForeverHook() || this);
+            // wait for Net to heave an connection then fetch the list from server
+            return net.ready.then(this.list.bind(this, true)).then(() => this);
         };
 
         this.get = (uid) => {
@@ -443,7 +438,7 @@ class ShovelClient {
                     { action: ACTIONS.list }
                 ];
 
-                return net.request({ method: 'POST', path: URL }, postData);
+                return net.request(jsone.encode(postData));
             } else {
                 let types = new Map();
                 instances.forEach((instance, uid) => {
@@ -469,19 +464,11 @@ class ShovelClient {
         return Wrapper;
     }
 
-    static create(request, getSessionId, options = {}, fetchList = true) {
-
-        options.request = request;
-        options.getSessionId = getSessionId;
+    static async create(options = {}, fetchList = true) {
 
         let client = new ShovelClient(options);
-        return fetchList ? client.initialize() : client;
-    }
-
-    static generateSessionId() {
-
-        return getUid();
+        return await (fetchList ? client.initialize() : client);
     }
 }
 
-module.exports = ShovelClient;
+module.exports = ShovelClient.create;

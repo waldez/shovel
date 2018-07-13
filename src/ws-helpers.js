@@ -1,6 +1,11 @@
 'use strict'
 
 const DELIMITER = 'λ';
+const MESSAGE_TYPE = Object.freeze({
+    REQUEST: 'q',
+    RESPONSE: 's',
+    ERROR: 'e'
+});
 
 class ConcurentIds {
 
@@ -43,5 +48,6 @@ module.exports = {
         return id + type + DELIMITER + message;
     },
 
-    ConcurentIds
+    ConcurentIds,
+    MESSAGE_TYPE
 };

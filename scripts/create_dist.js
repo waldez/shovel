@@ -6,7 +6,7 @@ const path = require('path');
 const webPackConfig = {
     context: path.resolve(__dirname, '../src'),
     entry: {
-        app: './browser_client.js'
+        app: './client.js'
     },
     output: {
         path: path.resolve(__dirname, '../dist'),
@@ -18,7 +18,7 @@ const webPackConfig = {
 const minifyWebPackConfig = {
     context: path.resolve(__dirname, '../src'),
     entry: {
-        app: './browser_client.js'
+        app: './client.js'
     },
     output: {
         path: path.resolve(__dirname, '../dist'),
@@ -33,7 +33,6 @@ const minifyWebPackConfig = {
             exclude: [/node_modules/],
             use: [{
                 loader: 'babel-loader',
-                // options: { presets: ['es2015'] }
                 options: { presets: ['env'] }
             }]
         }

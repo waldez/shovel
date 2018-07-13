@@ -114,7 +114,7 @@ class FunctionHandler {
 
 class Shovel extends EventEmitter {
 
-    constructor(/*options*/{ port = DEFAULT_PORT } = {}) {
+    constructor(/*options*/{ port = DEFAULT_PORT, server = null } = {}) {
 
         super();
         // TODO: Map of registered prototypes to be able fast compare
@@ -218,7 +218,8 @@ class Shovel extends EventEmitter {
             incomingMessageHandler: this.processRequest.bind(this),
             clientSourcePromise: this.getClientSrc(),
             clientSourceMinPromise: this.getClientSrc(true),
-            verbose: true
+            verbose: true,
+            server
         });
 
         // start the fun!
@@ -493,7 +494,8 @@ class Shovel extends EventEmitter {
 
 module.exports = {
     Shovel,
-    ShovelClient: require('./node_client'),
+    // ShovelClient: require('./node_client'),
+    ShovelClient: require('./client'),
     SCOPE,
     PERSISTENCE
 };

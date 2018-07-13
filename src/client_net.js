@@ -2,12 +2,7 @@
 
 const WebSocket = require('isomorphic-ws');
 const wsHelpers = require('./ws-helpers');
-
-// 25 seconds hook timeout
-const HOOK_TIMEOUT = 25 * 1000;
-const OK_STATUSES = [200];
-const URL = '/';
-const isOkStatus = status => OK_STATUSES.indexOf(status) > -1;
+const MESSAGE_TYPE = wsHelpers.MESSAGE_TYPE;
 
 function getOfType(value, type) {
     if (typeof value !== type) {
@@ -21,29 +16,20 @@ class Net {
     constructor(options) {
 
         const {
-            requestFn,
             host,
             port,
-            sessionId,
             bodyParser,
             buildMetadata,
-            onHandlerData,
-            reverseHookEnabled = true
+            onHandlerData
         } = getOfType(options, 'object');
-
-        this.hookTimer = undefined;
-        this.hookPromise = undefined;
 
         // assign with type control
         this.host = getOfType(host, 'string');
         this.port = getOfType(port, 'string');
 
-        this.sessionId = getOfType(sessionId, 'string');
-        this.requestFn = getOfType(requestFn, 'function');
         this.bodyParser = getOfType(bodyParser, 'function');
         this.buildMetadata = getOfType(buildMetadata, 'function');
         this.onHandlerData = getOfType(onHandlerData, 'function');
-        this.reverseHookEnabled = getOfType(reverseHookEnabled, 'boolean');
 
         const awaitingResponses = new Map();
         const concurentIds = new wsHelpers.ConcurentIds();
@@ -52,7 +38,7 @@ class Net {
 
             const { type, id, rawData } = wsHelpers.extractHeader(event.data);
             switch (type) {
-                case 'q': // request - function handler
+                case MESSAGE_TYPE.REQUEST:
                     try {
                         const body = this.bodyParser(rawData);
                         this.onHandlerData(body);
@@ -62,41 +48,54 @@ class Net {
                     }
                     return;
 
-                case 's': // response
+                case MESSAGE_TYPE.RESPONSE:
                     awaitingResponses.get(id)(rawData, 200, null);
                     return;
 
-                case 'e': // error
+                case MESSAGE_TYPE.ERROR:
                     awaitingResponses.get(id)(rawData, 500, 'Error vole!');
                     return;
             }
         };
 
-        ws.onopen = event => {
+        this.readyPromise = new Promise((resolveReady, rejectReady) => {
 
-            this.request = (options /*ignored*/, data) => {
+            ws.onopen = event => {
 
-                return new Promise((resolve, reject) => {
+                this.stop = () => ws.close(1000, 'OK - Shovel client "stop" was called.');
 
-                    const requestId = concurentIds.popId();
-                    const requestData = wsHelpers.insertHeader(data, 'q', requestId);
-                    awaitingResponses.set(requestId, (body, statusCode, statusMessage) => {
-                        // cleanup
-                        awaitingResponses.delete(requestId);
-                        concurentIds.pushId(requestId);
-                        // process the response
-                        return this.processResponse(resolve, reject, body, 200, null);
+                this.request = (data) => {
+
+                    return new Promise((resolve, reject) => {
+
+                        const requestId = concurentIds.popId();
+                        const requestData = wsHelpers.insertHeader(data, MESSAGE_TYPE.REQUEST, requestId);
+                        awaitingResponses.set(requestId, (body, statusCode, statusMessage) => {
+                            // cleanup
+                            awaitingResponses.delete(requestId);
+                            concurentIds.pushId(requestId);
+                            // process the response
+                            return this.processResponse(resolve, reject, body, 200, null);
+                        });
+                        ws.send(requestData);
                     });
-                    ws.send(requestData);
-                });
+                };
+
+                resolveReady(this);
             };
-        };
+        });
     }
+
+    /**
+     * Returns promise, which will resolve with this when connection is established
+     * @return {Promise<Net>}
+     */
+    get ready() { return this.readyPromise; }
 
     processResponse(resolve, reject, body, statusCode, statusMessage) {
 
         const response = body;
-        if (isOkStatus(statusCode)) {
+        if (statusCode === 200) {
             try {
                 Promise.resolve(this.bodyParser(body))
                     .then(resolve)
@@ -112,83 +111,6 @@ class Net {
                 response
             };
             reject(errorResponse);
-        }
-    }
-
-    request(options = {}, data) {
-
-        options.host = this.host;
-        options.port = this.port;
-        options.bodyParser = this.bodyParser;
-
-        const headers = {
-            'x-shovel-session': this.sessionId
-        };
-
-        return this.requestFn(this.processResponse.bind(this), options, data, headers);
-    }
-
-    foreverHook() {
-
-        // clear the timer
-        clearTimeout(this.hookTimer);
-        this.hookTimer = null;
-
-        // needed this direct promise, to be able call abort
-        this.hookPromise = this.request({ method: 'POST', path: URL + 'foreverhook' }, [this.buildMetadata()]);
-        this.hookPromise
-            .then(data => {
-                if (this.hookPromise) {
-                    // fullfilled, so clear it
-                    this.hookPromise = null;
-                    // call the external "event handler"
-                    this.onHandlerData(data);
-                }
-                // keep the cycle alive
-                this.nextTickForeverHook();
-            }, error => {
-
-                // TODO: FIX!!
-                // jakmile to vytimeoutuje, tak je to zruseno na clientovi, coz znamena,
-                // ze server ma neplatne spojeni (tudiz ta promisa ve scopu je k nicemu)
-                // OSETRIT!! pred odeslanim zjistit, jestli je to spojeni jeste cerstvy!!!
-                // estli ne, tak pockat na dalsi forever hook
-                // (toto je asi duvod, proc mi to obcas neodesilalo ze serveru)
-
-                if (error.code === 'ECONNRESET' ||
-                    error.response === '"aborted"' ||
-                    error.statusCode == 0) {
-                    // NOOP - this is expected
-                } else {
-                    console.log('Error occured on forever hook:\n', error);
-                }
-
-                // fullfilled with error, so clear it
-                this.hookPromise = null;
-            });
-
-        // set the timeout
-        this.hookTimer = setTimeout(this.abortForeverHook.bind(this), HOOK_TIMEOUT);
-    }
-
-    abortForeverHook() {
-
-        this.hookTimer = null;
-        // if there is pending request, cancel it
-        if (this.hookPromise) {
-            this.hookPromise.abort();
-            this.hookPromise = null;
-
-        }
-        // restart the loop
-        this.nextTickForeverHook();
-    }
-
-    // we don't want to bleed out of stack, do we?
-    nextTickForeverHook() {
-
-        if (false && this.reverseHookEnabled) {
-            setTimeout(this.foreverHook.bind(this), 0);
         }
     }
 }
