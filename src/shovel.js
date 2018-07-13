@@ -214,12 +214,24 @@ class Shovel extends EventEmitter {
 
         this.port = port;
         this.server = new Server(port, {
-            Promise,
             incomingMessageHandler: this.processRequest.bind(this),
             clientSourcePromise: this.getClientSrc(),
             clientSourceMinPromise: this.getClientSrc(true),
             verbose: true,
             server
+        });
+
+        this.server.on('startSession', sessionId => {
+
+            const session = new Session(sessionId);
+            this.sessionMap.set(sessionId, session);
+            this.emit('startSession', sessionId, session);
+        });
+
+        this.server.on('endSession', sessionId => {
+
+            this.sessionMap.delete(sessionId);
+            this.emit('endSession', sessionId);
         });
 
         // start the fun!
@@ -423,9 +435,7 @@ class Shovel extends EventEmitter {
         let session = this.sessionMap.get(sessionId);
 
         if (!session) {
-            session = new Session(sessionId);
-            this.sessionMap.set(sessionId, session);
-            this.emit('newSession', sessionId, session);
+            throw new Error(`Session ${sessionId} not found!`);
         }
 
         return session;

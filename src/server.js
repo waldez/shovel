@@ -3,7 +3,6 @@ const EventEmitter = require('events');
 const WebSocket = require('ws');
 const uuidV1 = require('uuid/v1');
 const wsHelpers = require('./ws-helpers');
-const ForeverHook = require('./forever_hook');
 const MESSAGE_TYPE = wsHelpers.MESSAGE_TYPE;
 const PRIVATE = Symbol('private');
 
@@ -43,7 +42,6 @@ class Server extends EventEmitter {
         {
             clientSourcePromise,
             clientSourceMinPromise,
-            Promise,
             incomingMessageHandler,
             verbose = false,
             server = null
@@ -60,8 +58,6 @@ class Server extends EventEmitter {
         wss.on('connection', ws => {
 
             // TODO!!!!!!
-            // CLEANUP the mess after disconnecting!
-
             // + pushId() for function handler requestu!
 
             const connection = new ClientConnection(ws);
