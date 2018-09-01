@@ -910,7 +910,7 @@ module.exports = ShovelClient.create;
 "use strict";
 
 
-const DELIMITER = 'λ';
+const DELIMITER = ':';
 const MESSAGE_TYPE = Object.freeze({
     REQUEST: 'q',
     RESPONSE: 's',
