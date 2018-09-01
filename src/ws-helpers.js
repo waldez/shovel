@@ -35,7 +35,9 @@ module.exports = {
     // TODO: better!
     extractHeader(message) {
 
-        const [header, rawData] = message.split(DELIMITER, 2);
+        const headerEndIndex = message.indexOf(DELIMITER);
+        const header = message.substring(0, headerEndIndex);
+        const rawData = message.substring(headerEndIndex + 1);
         return {
             type: header[header.length - 1],
             id: parseInt(header),
