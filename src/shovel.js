@@ -351,7 +351,7 @@ class Shovel extends EventEmitter {
             wrapper = obj;
             instance = wrapper[_instance];
         } else {
-            wrapper = this.getInstances(instance, session);
+            wrapper = this.getInstance(instance, session);
         }
 
         if (wrapper) {
